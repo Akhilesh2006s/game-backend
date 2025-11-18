@@ -1,0 +1,602 @@
+const jwt = require('jsonwebtoken');
+const Game = require('../models/Game');
+
+const activeMatches = new Map();
+
+const beats = {
+  rock: 'scissors',
+  paper: 'rock',
+  scissors: 'paper',
+};
+
+const determineWinner = (hostMove, guestMove) => {
+  if (hostMove === guestMove) return 'draw';
+  return beats[hostMove] === guestMove ? 'host' : 'guest';
+};
+
+const initGameSocket = (io) => {
+  io.use((socket, next) => {
+    try {
+      const token = socket.handshake.auth?.token;
+      if (!token) {
+        return next(new Error('Missing token'));
+      }
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      socket.user = decoded;
+      next();
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  io.on('connection', (socket) => {
+    socket.on('joinGame', async ({ code }) => {
+      const upper = code?.toUpperCase();
+      if (!upper) return;
+
+      const game = await Game.findOne({ code: upper });
+      if (!game) {
+        socket.emit('game:error', 'Game not found');
+        return;
+      }
+      const isParticipant =
+        String(game.host) === socket.user.id ||
+        (game.guest && String(game.guest) === socket.user.id);
+      if (!isParticipant) {
+        socket.emit('game:error', 'You are not part of this arena yet');
+        return;
+      }
+
+      socket.join(upper);
+      socket.emit('game:joined', { code: upper });
+      socket.to(upper).emit('game:peer_joined', socket.user.username);
+    });
+
+    socket.on('submitMove', async ({ code, move }) => {
+      const upper = code?.toUpperCase();
+      if (!upper || !['rock', 'paper', 'scissors'].includes(move)) {
+        socket.emit('game:error', 'Invalid move or code');
+        return;
+      }
+
+      // Ensure socket is in the room
+      const rooms = Array.from(socket.rooms);
+      if (!rooms.includes(upper)) {
+        socket.emit('game:error', 'Please join the game first');
+        return;
+      }
+
+      const game = await Game.findOne({ code: upper });
+      if (!game) {
+        socket.emit('game:error', 'Game not found');
+        return;
+      }
+
+      if (!game.guest) {
+        socket.emit('game:error', 'Waiting for opponent to join');
+        return;
+      }
+
+      // Normalize IDs to strings for consistent comparison
+      const userId = String(socket.user.id);
+      const hostId = String(game.host);
+      const guestId = String(game.guest);
+
+      const isParticipant = userId === hostId || userId === guestId;
+      if (!isParticipant) {
+        socket.emit('game:error', 'You are not part of this game');
+        return;
+      }
+
+      let state = activeMatches.get(upper);
+      if (!state) {
+        state = { moves: {} };
+        activeMatches.set(upper, state);
+      }
+
+      // Store move using normalized ID
+      state.moves[userId] = move;
+      console.log(`[${upper}] Player ${socket.user.username} (${userId}) submitted: ${move}`);
+      socket.to(upper).emit('opponentLocked', socket.user.username);
+
+      // Check if both players have submitted
+      const hostMove = state.moves[hostId];
+      const guestMove = state.moves[guestId];
+
+      console.log(`[${upper}] Moves status - Host: ${hostMove || 'pending'}, Guest: ${guestMove || 'pending'}`);
+
+      if (!hostMove || !guestMove) {
+        // Not both moves received yet
+        return;
+      }
+
+      const result = determineWinner(hostMove, guestMove);
+
+      let winnerUserId = null;
+      if (result === 'host') {
+        winnerUserId = game.host;
+        game.hostScore += 1;
+      } else if (result === 'guest') {
+        winnerUserId = game.guest;
+        game.guestScore += 1;
+      }
+
+      game.rounds.push({
+        gameType: 'ROCK_PAPER_SCISSORS',
+        moves: [
+          { player: game.host, choice: hostMove },
+          { player: game.guest, choice: guestMove },
+        ],
+        winner: winnerUserId,
+        summary:
+          result === 'draw'
+            ? 'It is a perfect tie!'
+            : `${result.toUpperCase()} wipes the board this round.`,
+      });
+
+      const isGameComplete = game.hostScore >= 10 || game.guestScore >= 10;
+      if (isGameComplete) {
+        game.status = 'COMPLETE';
+        game.completedAt = new Date();
+        game.activeStage = 'ROCK_PAPER_SCISSORS';
+      } else {
+        game.status = 'IN_PROGRESS';
+        game.activeStage = 'ROCK_PAPER_SCISSORS';
+      }
+      
+      await game.save();
+
+      const resultPayload = {
+        code: upper,
+        result,
+        hostMove,
+        guestMove,
+        hostScore: game.hostScore,
+        guestScore: game.guestScore,
+        isGameComplete,
+        winner: isGameComplete ? (game.hostScore >= 10 ? 'host' : 'guest') : null,
+        nextStage: isGameComplete ? null : 'ROCK_PAPER_SCISSORS',
+      };
+
+      console.log(`[${upper}] Emitting roundResult:`, resultPayload);
+      io.to(upper).emit('roundResult', resultPayload);
+
+      activeMatches.delete(upper);
+    });
+
+    // Matching Pennies game handler
+    socket.on('submitPenniesMove', async ({ code, choice }) => {
+      const upper = code?.toUpperCase();
+      if (!upper || !['heads', 'tails'].includes(choice)) {
+        socket.emit('game:error', 'Invalid choice or code');
+        return;
+      }
+
+      const rooms = Array.from(socket.rooms);
+      if (!rooms.includes(upper)) {
+        socket.emit('game:error', 'Please join the game first');
+        return;
+      }
+
+      const game = await Game.findOne({ code: upper }).populate('host', 'username').populate('guest', 'username');
+      if (!game) {
+        socket.emit('game:error', 'Game not found');
+        return;
+      }
+
+      if (!game.guest) {
+        socket.emit('game:error', 'Waiting for opponent to join');
+        return;
+      }
+
+      if (game.activeStage !== 'MATCHING_PENNIES') {
+        socket.emit('game:error', 'Matching Pennies is not active');
+        return;
+      }
+
+      const userId = String(socket.user.id);
+      // Handle both populated objects and ObjectIds
+      const hostId = String(game.host?._id || game.host?.id || game.host);
+      const guestId = String(game.guest?._id || game.guest?.id || game.guest);
+
+      const isParticipant = userId === hostId || userId === guestId;
+      if (!isParticipant) {
+        socket.emit('game:error', 'You are not part of this game');
+        return;
+      }
+
+      let state = activeMatches.get(`pennies_${upper}`);
+      if (!state) {
+        state = { choices: {}, roundNumber: game.penniesRoundNumber || 0 };
+        activeMatches.set(`pennies_${upper}`, state);
+      }
+
+      state.choices[userId] = choice;
+      console.log(`[${upper}] Player ${socket.user.username} (${userId}) submitted: ${choice}`);
+      socket.to(upper).emit('penniesOpponentLocked', socket.user.username);
+
+      const hostChoice = state.choices[hostId];
+      const guestChoice = state.choices[guestId];
+
+      console.log(`[${upper}] Pennies choices - Host: ${hostChoice || 'pending'}, Guest: ${guestChoice || 'pending'}`);
+
+      if (!hostChoice || !guestChoice) {
+        return;
+      }
+
+      // Determine roles based on round number
+      // Even rounds: Host chooses, Guest guesses
+      // Odd rounds: Guest chooses, Host guesses
+      const isEvenRound = state.roundNumber % 2 === 0;
+      const chooserId = isEvenRound ? hostId : guestId;
+      const guesserId = isEvenRound ? guestId : hostId;
+      const chooserChoice = isEvenRound ? hostChoice : guestChoice;
+      const guesserChoice = isEvenRound ? guestChoice : hostChoice;
+
+      const guesserWon = chooserChoice === guesserChoice;
+      let winnerUserId = null;
+      let winner = null;
+
+      if (guesserWon) {
+        winnerUserId = guesserId === hostId ? game.host : game.guest;
+        winner = guesserId === hostId ? 'host' : 'guest';
+        if (winner === 'host') {
+          game.hostPenniesScore += 1;
+        } else {
+          game.guestPenniesScore += 1;
+        }
+      } else {
+        winnerUserId = chooserId === hostId ? game.host : game.guest;
+        winner = chooserId === hostId ? 'host' : 'guest';
+        if (winner === 'host') {
+          game.hostPenniesScore += 1;
+        } else {
+          game.guestPenniesScore += 1;
+        }
+      }
+
+      game.rounds.push({
+        gameType: 'MATCHING_PENNIES',
+        moves: [
+          { player: game.host, choice: hostChoice },
+          { player: game.guest, choice: guestChoice },
+        ],
+        winner: winnerUserId,
+        summary: guesserWon
+          ? `${guesserId === hostId ? game.host.username : game.guest.username} guessed correctly!`
+          : `${chooserId === hostId ? game.host.username : game.guest.username} won by choosing ${chooserChoice}.`,
+      });
+
+      state.roundNumber += 1;
+      game.penniesRoundNumber = state.roundNumber;
+
+      const isGameComplete = game.hostPenniesScore >= 10 || game.guestPenniesScore >= 10;
+      if (isGameComplete) {
+        game.status = 'COMPLETE';
+        game.completedAt = new Date();
+      } else {
+        game.status = 'IN_PROGRESS';
+      }
+
+      await game.save();
+
+      const chooserName = chooserId === hostId ? game.host.username : game.guest.username;
+      const guesserName = guesserId === hostId ? game.host.username : game.guest.username;
+
+      const resultPayload = {
+        code: upper,
+        winner: isGameComplete ? (game.hostPenniesScore >= 10 ? 'host' : 'guest') : winner,
+        chooserChoice,
+        guesserChoice,
+        chooserName,
+        guesserName,
+        guesserWon,
+        hostScore: game.hostPenniesScore,
+        guestScore: game.guestPenniesScore,
+        roundNumber: state.roundNumber - 1,
+        isGameComplete,
+      };
+
+      console.log(`[${upper}] Emitting penniesResult:`, resultPayload);
+      io.to(upper).emit('penniesResult', resultPayload);
+
+      // Clear choices for next round
+      state.choices = {};
+      activeMatches.set(`pennies_${upper}`, state);
+    });
+
+    // Game of Go handler
+    socket.on('submitGoMove', async ({ code, row, col, color }) => {
+      const upper = code?.toUpperCase();
+      if (!upper || row === undefined || col === undefined || !color) {
+        socket.emit('game:error', 'Invalid move or code');
+        return;
+      }
+
+      const rooms = Array.from(socket.rooms);
+      if (!rooms.includes(upper)) {
+        socket.emit('game:error', 'Please join the game first');
+        return;
+      }
+
+      const game = await Game.findOne({ code: upper }).populate('host', 'username').populate('guest', 'username');
+      if (!game) {
+        socket.emit('game:error', 'Game not found');
+        return;
+      }
+
+      if (!game.guest) {
+        socket.emit('game:error', 'Waiting for opponent to join');
+        return;
+      }
+
+      if (game.activeStage !== 'GAME_OF_GO') {
+        socket.emit('game:error', 'Game of Go is not active');
+        return;
+      }
+
+      const userId = String(socket.user.id);
+      // Handle both populated objects and ObjectIds
+      const hostId = String(game.host?._id || game.host?.id || game.host);
+      const guestId = String(game.guest?._id || game.guest?.id || game.guest);
+
+      const isParticipant = userId === hostId || userId === guestId;
+      if (!isParticipant) {
+        socket.emit('game:error', 'You are not part of this game');
+        return;
+      }
+
+      // Verify it's the player's turn
+      const expectedColor = userId === hostId ? 'black' : 'white';
+      if (color !== expectedColor) {
+        socket.emit('game:error', 'Invalid color for your player');
+        return;
+      }
+
+      if (game.goCurrentTurn !== color) {
+        socket.emit('game:error', 'Not your turn');
+        return;
+      }
+
+      // Initialize board if needed
+      if (!game.goBoard) {
+        game.goBoard = Array(9).fill(null).map(() => Array(9).fill(null));
+      }
+
+      // Validate move
+      if (row < 0 || row >= 9 || col < 0 || col >= 9) {
+        socket.emit('game:error', 'Invalid board position');
+        return;
+      }
+
+      if (game.goBoard[row][col] !== null) {
+        socket.emit('game:error', 'Position already occupied');
+        return;
+      }
+
+      // Make a copy of the board for testing
+      const testBoard = game.goBoard.map(r => [...r]);
+      testBoard[row][col] = color;
+
+      // Check for opponent captures first
+      const captured = checkCaptures(testBoard, row, col, color === 'black' ? 'white' : 'black');
+      
+      // Apply opponent captures
+      captured.forEach(([r, c]) => {
+        testBoard[r][c] = null;
+      });
+
+      // SUICIDE RULE: Check if the placed stone's own group has liberties
+      // If no opponent stones were captured AND own group has no liberties, it's suicide
+      if (captured.length === 0) {
+        const ownGroup = findGroup(testBoard, row, col, color, new Set());
+        if (!hasLiberties(testBoard, ownGroup)) {
+          socket.emit('game:error', 'Suicide rule: Cannot place stone that would capture your own group');
+          return;
+        }
+      }
+
+      // KO RULE: Check if this move would recreate the previous board state
+      if (game.goPreviousBoard) {
+        const boardString = JSON.stringify(testBoard);
+        const prevBoardString = JSON.stringify(game.goPreviousBoard);
+        if (boardString === prevBoardString) {
+          socket.emit('game:error', 'Ko rule: Cannot recreate the previous board position');
+          return;
+        }
+      }
+
+      // Store current board as previous for Ko rule
+      game.goPreviousBoard = game.goBoard.map(r => [...r]);
+      
+      // Update board
+      game.goBoard = testBoard;
+      game.goConsecutivePasses = 0; // Reset pass counter on valid move
+      
+      // Update captured stones
+      if (color === 'black') {
+        game.goCapturedBlack += captured.length;
+      } else {
+        game.goCapturedWhite += captured.length;
+      }
+
+      // Switch turn
+      game.goCurrentTurn = color === 'black' ? 'white' : 'black';
+      game.status = 'IN_PROGRESS';
+
+      await game.save();
+
+      const movePayload = {
+        code: upper,
+        board: game.goBoard,
+        currentTurn: game.goCurrentTurn,
+        capturedBlack: game.goCapturedBlack,
+        capturedWhite: game.goCapturedWhite,
+        lastMove: { row, col, color },
+        message: `${socket.user.username} placed a ${color} stone at (${row + 1}, ${col + 1})${captured.length > 0 ? ` and captured ${captured.length} stone(s)` : ''}`,
+      };
+
+      io.to(upper).emit('goMove', movePayload);
+    });
+
+    // Pass handler for Game of Go
+    socket.on('passGo', async ({ code }) => {
+      const upper = code?.toUpperCase();
+      if (!upper) {
+        socket.emit('game:error', 'Invalid code');
+        return;
+      }
+
+      const rooms = Array.from(socket.rooms);
+      if (!rooms.includes(upper)) {
+        socket.emit('game:error', 'Please join the game first');
+        return;
+      }
+
+      const game = await Game.findOne({ code: upper }).populate('host', 'username').populate('guest', 'username');
+      if (!game) {
+        socket.emit('game:error', 'Game not found');
+        return;
+      }
+
+      if (game.activeStage !== 'GAME_OF_GO') {
+        socket.emit('game:error', 'Game of Go is not active');
+        return;
+      }
+
+      const userId = String(socket.user.id);
+      const hostId = String(game.host?._id || game.host?.id || game.host);
+      const guestId = String(game.guest?._id || game.guest?.id || game.guest);
+      const isParticipant = userId === hostId || userId === guestId;
+      
+      if (!isParticipant) {
+        socket.emit('game:error', 'You are not part of this game');
+        return;
+      }
+
+      const expectedColor = userId === hostId ? 'black' : 'white';
+      if (game.goCurrentTurn !== expectedColor) {
+        socket.emit('game:error', 'Not your turn');
+        return;
+      }
+
+      // Increment consecutive passes
+      game.goConsecutivePasses += 1;
+      
+      // Switch turn
+      game.goCurrentTurn = expectedColor === 'black' ? 'white' : 'black';
+      
+      // Check if both players passed (game ends)
+      if (game.goConsecutivePasses >= 2) {
+        game.status = 'COMPLETE';
+        game.completedAt = new Date();
+        
+        // Calculate territory and final scores (simplified - just use captured stones for now)
+        // In a full implementation, you'd calculate territory here
+        const blackScore = game.goCapturedWhite;
+        const whiteScore = game.goCapturedBlack;
+        const winner = blackScore > whiteScore ? 'host' : whiteScore > blackScore ? 'guest' : null;
+        
+        await game.save();
+        
+        const passPayload = {
+          code: upper,
+          currentTurn: game.goCurrentTurn,
+          consecutivePasses: game.goConsecutivePasses,
+          message: `${socket.user.username} passed. ${game.goConsecutivePasses >= 2 ? 'Both players passed. Game ended.' : ''}`,
+          gameComplete: game.goConsecutivePasses >= 2,
+          winner: winner,
+          blackScore,
+          whiteScore,
+        };
+        
+        io.to(upper).emit('goPass', passPayload);
+      } else {
+        await game.save();
+        
+        const passPayload = {
+          code: upper,
+          currentTurn: game.goCurrentTurn,
+          consecutivePasses: game.goConsecutivePasses,
+          message: `${socket.user.username} passed. Waiting for opponent.`,
+        };
+        
+        io.to(upper).emit('goPass', passPayload);
+      }
+    });
+  });
+};
+
+// Helper function to check for captures
+function checkCaptures(board, row, col, opponentColor) {
+  const captured = [];
+  const visited = new Set();
+  const BOARD_SIZE = 9;
+
+  // Check all adjacent opponent groups
+  const directions = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+  
+  for (const [dr, dc] of directions) {
+    const nr = row + dr;
+    const nc = col + dc;
+    
+    if (nr < 0 || nr >= BOARD_SIZE || nc < 0 || nc >= BOARD_SIZE) continue;
+    if (board[nr][nc] !== opponentColor) continue;
+    
+    const group = findGroup(board, nr, nc, opponentColor, visited);
+    if (!hasLiberties(board, group)) {
+      group.forEach(([r, c]) => {
+        if (!captured.some(([cr, cc]) => cr === r && cc === c)) {
+          captured.push([r, c]);
+        }
+      });
+    }
+  }
+
+  return captured;
+}
+
+function findGroup(board, startRow, startCol, color, visited) {
+  const group = [];
+  const stack = [[startRow, startCol]];
+  const BOARD_SIZE = 9;
+
+  while (stack.length > 0) {
+    const [r, c] = stack.pop();
+    const key = `${r},${c}`;
+    
+    if (visited.has(key)) continue;
+    if (r < 0 || r >= BOARD_SIZE || c < 0 || c >= BOARD_SIZE) continue;
+    if (board[r][c] !== color) continue;
+
+    visited.add(key);
+    group.push([r, c]);
+
+    const directions = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+    for (const [dr, dc] of directions) {
+      stack.push([r + dr, c + dc]);
+    }
+  }
+
+  return group;
+}
+
+function hasLiberties(board, group) {
+  const BOARD_SIZE = 9;
+  const directions = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+
+  for (const [r, c] of group) {
+    for (const [dr, dc] of directions) {
+      const nr = r + dr;
+      const nc = c + dc;
+      
+      if (nr < 0 || nr >= BOARD_SIZE || nc < 0 || nc >= BOARD_SIZE) continue;
+      if (board[nr][nc] === null) return true;
+    }
+  }
+
+  return false;
+}
+
+module.exports = initGameSocket;
+
