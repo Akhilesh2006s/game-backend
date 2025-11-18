@@ -12,7 +12,12 @@ const PORT = process.env.PORT || 5000;
 // Allow multiple origins for development and production
 const allowedOrigins = process.env.CLIENT_ORIGIN 
   ? process.env.CLIENT_ORIGIN.split(',').map(origin => origin.trim())
-  : ['http://localhost:5173', 'https://games-frontend-mocha.vercel.app'];
+  : [
+      'http://localhost:5173', 
+      'https://games-frontend-mocha.vercel.app',
+      'https://games-frontend-92qdx6knh-akhilesh2006s-projects.vercel.app',
+      /^https:\/\/games-frontend-.*\.vercel\.app$/ // Allow all Vercel preview URLs
+    ];
 
 const app = express();
 const server = http.createServer(app);
@@ -23,7 +28,17 @@ app.use(
       // Allow requests with no origin (like mobile apps or curl requests)
       if (!origin) return callback(null, true);
       
-      if (allowedOrigins.indexOf(origin) !== -1) {
+      // Check if origin is in allowed list
+      const isAllowed = allowedOrigins.some(allowedOrigin => {
+        if (typeof allowedOrigin === 'string') {
+          return allowedOrigin === origin;
+        } else if (allowedOrigin instanceof RegExp) {
+          return allowedOrigin.test(origin);
+        }
+        return false;
+      });
+      
+      if (isAllowed) {
         callback(null, true);
       } else {
         callback(new Error('Not allowed by CORS'));
