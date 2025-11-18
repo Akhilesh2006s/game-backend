@@ -30,12 +30,19 @@ app.use(
       }
     },
     credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    exposedHeaders: ['Content-Type', 'Authorization'],
   })
 );
 app.use(express.json());
 
 app.get('/', (_req, res) => {
-  res.json({ message: 'Ceteris-Paribus Arena backend online' });
+  res.json({ 
+    message: 'Ceteris-Paribus Arena backend online',
+    allowedOrigins: allowedOrigins,
+    timestamp: new Date().toISOString()
+  });
 });
 
 app.use('/api/auth', authRoutes);
