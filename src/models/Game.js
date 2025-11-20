@@ -1,5 +1,14 @@
 const mongoose = require('mongoose');
 
+const deadStoneSchema = new mongoose.Schema(
+  {
+    row: { type: Number, required: true },
+    col: { type: Number, required: true },
+    color: { type: String, enum: ['black', 'white'], required: true },
+  },
+  { _id: false }
+);
+
 const roundSchema = new mongoose.Schema(
   {
     gameType: {
@@ -34,12 +43,31 @@ const gameSchema = new mongoose.Schema(
     hostPenniesScore: { type: Number, default: 0 },
     guestPenniesScore: { type: Number, default: 0 },
     penniesRoundNumber: { type: Number, default: 0 },
-    goBoard: { type: [[String]], default: null }, // 9x9 board: null, 'black', or 'white'
+    goBoard: { type: [[String]], default: null }, // NxN board: null, 'black', or 'white'
     goPreviousBoard: { type: [[String]], default: null }, // For Ko rule - previous board state
+    goBoardSize: { type: Number, default: 9 },
+    goKomi: { type: Number, default: 5.5 },
+    goPositionHashes: { type: [String], default: [] }, // Superko tracking
     goCurrentTurn: { type: String, enum: ['black', 'white'], default: 'black' },
     goCapturedBlack: { type: Number, default: 0 },
     goCapturedWhite: { type: Number, default: 0 },
     goConsecutivePasses: { type: Number, default: 0 }, // Track consecutive passes for game end
+    goDeadStones: { type: [deadStoneSchema], default: [] },
+    goPhase: {
+      type: String,
+      enum: ['PLAY', 'SCORING', 'COMPLETE'],
+      default: 'PLAY',
+    },
+    goFinalScore: { type: mongoose.Schema.Types.Mixed, default: null },
+    goScoringConfirmations: {
+      type: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+      default: [],
+    },
+    goPendingScoringMethod: {
+      type: String,
+      enum: ['chinese', 'japanese'],
+      default: 'chinese',
+    },
     status: {
       type: String,
       enum: ['WAITING', 'READY', 'IN_PROGRESS', 'COMPLETE'],

@@ -2,12 +2,23 @@ const jwt = require('jsonwebtoken');
 const Game = require('../models/Game');
 
 const activeMatches = new Map();
+const BOARD_DEFAULT_SIZE = 9;
+const MAX_POSITION_HISTORY = 2048;
+const DEFAULT_SCORING_METHOD = 'chinese';
 
 const beats = {
   rock: 'scissors',
   paper: 'rock',
   scissors: 'paper',
 };
+
+const cloneBoard = (board = []) => board.map(row => [...row]);
+const createBoard = (size = BOARD_DEFAULT_SIZE) =>
+  Array(size)
+    .fill(null)
+    .map(() => Array(size).fill(null));
+const getPositionHash = (board, nextTurn) =>
+  JSON.stringify({ board, next: nextTurn });
 
 const determineWinner = (hostMove, guestMove) => {
   if (hostMove === guestMove) return 'draw';
@@ -335,6 +346,11 @@ const initGameSocket = (io) => {
         return;
       }
 
+      if (game.goPhase !== 'PLAY') {
+        socket.emit('game:error', 'Game is currently in scoring phase');
+        return;
+      }
+
       const userId = String(socket.user.id);
       // Handle both populated objects and ObjectIds
       const hostId = String(game.host?._id || game.host?.id || game.host);
@@ -364,9 +380,16 @@ const initGameSocket = (io) => {
       }
 
       // Validate move
-      if (row < 0 || row >= 9 || col < 0 || col >= 9) {
+      const boardSize = game.goBoardSize || BOARD_DEFAULT_SIZE;
+
+      if (row < 0 || row >= boardSize || col < 0 || col >= boardSize) {
         socket.emit('game:error', 'Invalid board position');
         return;
+      }
+
+      if (!game.goBoard || game.goBoard.length !== boardSize) {
+        game.goBoard = createBoard(boardSize);
+        game.markModified?.('goBoard');
       }
 
       if (game.goBoard[row][col] !== null) {
@@ -375,7 +398,7 @@ const initGameSocket = (io) => {
       }
 
       // Make a copy of the board for testing
-      const testBoard = game.goBoard.map(r => [...r]);
+      const testBoard = cloneBoard(game.goBoard);
       testBoard[row][col] = color;
 
       // Check for opponent captures first
@@ -396,22 +419,22 @@ const initGameSocket = (io) => {
         }
       }
 
-      // KO RULE: Check if this move would recreate the previous board state
-      if (game.goPreviousBoard) {
-        const boardString = JSON.stringify(testBoard);
-        const prevBoardString = JSON.stringify(game.goPreviousBoard);
-        if (boardString === prevBoardString) {
-          socket.emit('game:error', 'Ko rule: Cannot recreate the previous board position');
-          return;
-        }
+      // SUPERKO RULE: Check if this move recreates any previous board state (with next turn)
+      const nextTurn = color === 'black' ? 'white' : 'black';
+      const positionHash = getPositionHash(testBoard, nextTurn);
+      const history = Array.isArray(game.goPositionHashes) ? game.goPositionHashes : [];
+      if (history.includes(positionHash)) {
+        socket.emit('game:error', 'Superko rule: Cannot repeat a previous board position');
+        return;
       }
 
-      // Store current board as previous for Ko rule
-      game.goPreviousBoard = game.goBoard.map(r => [...r]);
+      // Store current board as previous for reference
+      game.goPreviousBoard = cloneBoard(game.goBoard);
       
       // Update board
       game.goBoard = testBoard;
       game.goConsecutivePasses = 0; // Reset pass counter on valid move
+      game.goPositionHashes = [...history.slice(-MAX_POSITION_HISTORY + 1), positionHash];
       
       // Update captured stones
       if (color === 'black') {
@@ -430,8 +453,11 @@ const initGameSocket = (io) => {
         code: upper,
         board: game.goBoard,
         currentTurn: game.goCurrentTurn,
+        boardSize,
         capturedBlack: game.goCapturedBlack,
         capturedWhite: game.goCapturedWhite,
+        komi: game.goKomi,
+        phase: game.goPhase,
         lastMove: { row, col, color },
         message: `${socket.user.username} placed a ${color} stone at (${row + 1}, ${col + 1})${captured.length > 0 ? ` and captured ${captured.length} stone(s)` : ''}`,
       };
@@ -464,6 +490,11 @@ const initGameSocket = (io) => {
         return;
       }
 
+      if (game.goPhase !== 'PLAY') {
+        socket.emit('game:error', 'Game is already in scoring phase');
+        return;
+      }
+
       const userId = String(socket.user.id);
       const hostId = String(game.host?._id || game.host?.id || game.host);
       const guestId = String(game.guest?._id || game.guest?.id || game.guest);
@@ -486,43 +517,209 @@ const initGameSocket = (io) => {
       // Switch turn
       game.goCurrentTurn = expectedColor === 'black' ? 'white' : 'black';
       
-      // Check if both players passed (game ends)
+      const passPayload = {
+        code: upper,
+        currentTurn: game.goCurrentTurn,
+        consecutivePasses: game.goConsecutivePasses,
+        message: `${socket.user.username} passed.${game.goConsecutivePasses >= 2 ? ' Both players passed. Entering scoring phase.' : ' Waiting for opponent.'}`,
+        phase: game.goPhase,
+      };
+      
       if (game.goConsecutivePasses >= 2) {
-        game.status = 'COMPLETE';
-        game.completedAt = new Date();
-        
-        // Calculate territory and final scores (simplified - just use captured stones for now)
-        // In a full implementation, you'd calculate territory here
-        const blackScore = game.goCapturedWhite;
-        const whiteScore = game.goCapturedBlack;
-        const winner = blackScore > whiteScore ? 'host' : whiteScore > blackScore ? 'guest' : null;
-        
-        await game.save();
-        
-        const passPayload = {
-          code: upper,
-          currentTurn: game.goCurrentTurn,
-          consecutivePasses: game.goConsecutivePasses,
-          message: `${socket.user.username} passed. ${game.goConsecutivePasses >= 2 ? 'Both players passed. Game ended.' : ''}`,
-          gameComplete: game.goConsecutivePasses >= 2,
-          winner: winner,
-          blackScore,
-          whiteScore,
-        };
-        
-        io.to(upper).emit('goPass', passPayload);
-      } else {
-        await game.save();
-        
-        const passPayload = {
-          code: upper,
-          currentTurn: game.goCurrentTurn,
-          consecutivePasses: game.goConsecutivePasses,
-          message: `${socket.user.username} passed. Waiting for opponent.`,
-        };
-        
-        io.to(upper).emit('goPass', passPayload);
+        game.goPhase = 'SCORING';
+        game.goScoringConfirmations = [];
+        game.goPendingScoringMethod = DEFAULT_SCORING_METHOD;
+        passPayload.phase = game.goPhase;
       }
+
+      await game.save();
+      io.to(upper).emit('goPass', passPayload);
+
+      if (game.goPhase === 'SCORING') {
+        const scoringPayload = {
+          code: upper,
+          board: game.goBoard,
+          boardSize: game.goBoardSize || BOARD_DEFAULT_SIZE,
+          komi: game.goKomi,
+          captures: {
+            black: game.goCapturedBlack,
+            white: game.goCapturedWhite,
+          },
+          deadStones: game.goDeadStones || [],
+          message: 'Both players passed. Entering dead stone marking phase.',
+        };
+
+        io.to(upper).emit('goScoringStart', scoringPayload);
+      }
+    });
+
+    socket.on('toggleGoDeadStone', async ({ code, row, col }) => {
+      const upper = code?.toUpperCase();
+      if (!upper || row === undefined || col === undefined) {
+        socket.emit('game:error', 'Invalid request');
+        return;
+      }
+
+      const rooms = Array.from(socket.rooms);
+      if (!rooms.includes(upper)) {
+        socket.emit('game:error', 'Please join the game first');
+        return;
+      }
+
+      const game = await Game.findOne({ code: upper }).populate('host', 'username').populate('guest', 'username');
+      if (!game) {
+        socket.emit('game:error', 'Game not found');
+        return;
+      }
+
+      if (game.activeStage !== 'GAME_OF_GO') {
+        socket.emit('game:error', 'Game of Go is not active');
+        return;
+      }
+
+      if (game.goPhase !== 'SCORING') {
+        socket.emit('game:error', 'Dead stones can only be marked during scoring');
+        return;
+      }
+
+      const boardSize = game.goBoardSize || BOARD_DEFAULT_SIZE;
+      if (row < 0 || row >= boardSize || col < 0 || col >= boardSize) {
+        socket.emit('game:error', 'Invalid board position');
+        return;
+      }
+
+      const stoneColor = game.goBoard?.[row]?.[col];
+      if (!stoneColor) {
+        socket.emit('game:error', 'Cannot mark an empty intersection as dead');
+        return;
+      }
+
+      const userId = String(socket.user.id);
+      const hostId = String(game.host?._id || game.host?.id || game.host);
+      const guestId = String(game.guest?._id || game.guest?.id || game.guest);
+      const isParticipant = userId === hostId || userId === guestId;
+      if (!isParticipant) {
+        socket.emit('game:error', 'You are not part of this game');
+        return;
+      }
+
+      const existingIndex = (game.goDeadStones || []).findIndex(
+        (stone) => stone.row === row && stone.col === col
+      );
+
+      if (existingIndex >= 0) {
+        game.goDeadStones.splice(existingIndex, 1);
+      } else {
+        game.goDeadStones.push({ row, col, color: stoneColor });
+      }
+
+      game.goScoringConfirmations = []; // invalidate confirmations when stones change
+
+      await game.save();
+
+      io.to(upper).emit('goDeadStonesUpdated', {
+        code: upper,
+        deadStones: game.goDeadStones,
+        updatedBy: socket.user.username,
+      });
+    });
+
+    socket.on('finalizeGoScore', async ({ code, method }) => {
+      const upper = code?.toUpperCase();
+      if (!upper) {
+        socket.emit('game:error', 'Invalid request');
+        return;
+      }
+
+      const rooms = Array.from(socket.rooms);
+      if (!rooms.includes(upper)) {
+        socket.emit('game:error', 'Please join the game first');
+        return;
+      }
+
+      const selectedMethod = method === 'japanese' ? 'japanese' : 'chinese';
+
+      const game = await Game.findOne({ code: upper }).populate('host', 'username').populate('guest', 'username');
+      if (!game) {
+        socket.emit('game:error', 'Game not found');
+        return;
+      }
+
+      if (game.activeStage !== 'GAME_OF_GO') {
+        socket.emit('game:error', 'Game of Go is not active');
+        return;
+      }
+
+      if (game.goPhase !== 'SCORING') {
+        socket.emit('game:error', 'Game is not in scoring phase');
+        return;
+      }
+
+      const userId = String(socket.user.id);
+      const hostId = String(game.host?._id || game.host?.id || game.host);
+      const guestId = String(game.guest?._id || game.guest?.id || game.guest);
+      if (userId !== hostId && userId !== guestId) {
+        socket.emit('game:error', 'You are not part of this game');
+        return;
+      }
+
+      if (game.goPendingScoringMethod && game.goScoringConfirmations.length > 0 && game.goPendingScoringMethod !== selectedMethod) {
+        socket.emit('game:error', `Scoring already in progress using ${game.goPendingScoringMethod} rules`);
+        return;
+      }
+
+      game.goPendingScoringMethod = selectedMethod;
+
+      const confirmations = new Set(
+        (game.goScoringConfirmations || []).map((id) => String(id))
+      );
+      if (!confirmations.has(userId)) {
+        game.goScoringConfirmations.push(socket.user.id);
+      }
+
+      const requiredConfirmations = game.guest ? 2 : 1;
+      if (game.goScoringConfirmations.length < requiredConfirmations) {
+        await game.save();
+        io.to(upper).emit('goScorePending', {
+          code: upper,
+          method: selectedMethod,
+          confirmations: game.goScoringConfirmations.length,
+          required: requiredConfirmations,
+          message: `${socket.user.username} confirmed scoring using ${selectedMethod} rules.`,
+        });
+        return;
+      }
+
+      const workingBoard = cloneBoard(game.goBoard || createBoard(game.goBoardSize || BOARD_DEFAULT_SIZE));
+      const deadCaptureBonus = removeDeadStonesForScoring(workingBoard, game.goDeadStones || []);
+      const totalCaptures = {
+        black: game.goCapturedBlack + deadCaptureBonus.black,
+        white: game.goCapturedWhite + deadCaptureBonus.white,
+      };
+
+      let scoreSummary;
+      if (selectedMethod === 'japanese') {
+        scoreSummary = calculateJapaneseScore(workingBoard, totalCaptures, game.goKomi);
+      } else {
+        scoreSummary = calculateChineseScore(workingBoard, totalCaptures, game.goKomi);
+      }
+
+      game.goCapturedBlack = totalCaptures.black;
+      game.goCapturedWhite = totalCaptures.white;
+      game.goFinalScore = { ...scoreSummary, method: selectedMethod };
+      game.goPhase = 'COMPLETE';
+      game.status = 'COMPLETE';
+      game.completedAt = new Date();
+      game.activeStage = 'GAME_OF_GO';
+      game.goScoringConfirmations = [];
+
+      await game.save();
+
+      io.to(upper).emit('goScoreFinalized', {
+        code: upper,
+        method: selectedMethod,
+        ...scoreSummary,
+      });
     });
   });
 };
@@ -531,7 +728,7 @@ const initGameSocket = (io) => {
 function checkCaptures(board, row, col, opponentColor) {
   const captured = [];
   const visited = new Set();
-  const BOARD_SIZE = 9;
+  const size = board?.length || BOARD_DEFAULT_SIZE;
 
   // Check all adjacent opponent groups
   const directions = [[-1, 0], [1, 0], [0, -1], [0, 1]];
@@ -540,7 +737,7 @@ function checkCaptures(board, row, col, opponentColor) {
     const nr = row + dr;
     const nc = col + dc;
     
-    if (nr < 0 || nr >= BOARD_SIZE || nc < 0 || nc >= BOARD_SIZE) continue;
+    if (nr < 0 || nr >= size || nc < 0 || nc >= size) continue;
     if (board[nr][nc] !== opponentColor) continue;
     
     const group = findGroup(board, nr, nc, opponentColor, visited);
@@ -559,14 +756,14 @@ function checkCaptures(board, row, col, opponentColor) {
 function findGroup(board, startRow, startCol, color, visited) {
   const group = [];
   const stack = [[startRow, startCol]];
-  const BOARD_SIZE = 9;
+  const size = board?.length || BOARD_DEFAULT_SIZE;
 
   while (stack.length > 0) {
     const [r, c] = stack.pop();
     const key = `${r},${c}`;
     
     if (visited.has(key)) continue;
-    if (r < 0 || r >= BOARD_SIZE || c < 0 || c >= BOARD_SIZE) continue;
+    if (r < 0 || r >= size || c < 0 || c >= size) continue;
     if (board[r][c] !== color) continue;
 
     visited.add(key);
@@ -582,7 +779,7 @@ function findGroup(board, startRow, startCol, color, visited) {
 }
 
 function hasLiberties(board, group) {
-  const BOARD_SIZE = 9;
+  const size = board?.length || BOARD_DEFAULT_SIZE;
   const directions = [[-1, 0], [1, 0], [0, -1], [0, 1]];
 
   for (const [r, c] of group) {
@@ -590,12 +787,161 @@ function hasLiberties(board, group) {
       const nr = r + dr;
       const nc = c + dc;
       
-      if (nr < 0 || nr >= BOARD_SIZE || nc < 0 || nc >= BOARD_SIZE) continue;
+      if (nr < 0 || nr >= size || nc < 0 || nc >= size) continue;
       if (board[nr][nc] === null) return true;
     }
   }
 
   return false;
+}
+
+function removeDeadStonesForScoring(board, deadStones = []) {
+  const bonusCaptures = { black: 0, white: 0 };
+
+  if (!board || !board.length) {
+    return bonusCaptures;
+  }
+
+  deadStones.forEach(({ row, col }) => {
+    if (
+      row === undefined ||
+      col === undefined ||
+      row < 0 ||
+      col < 0 ||
+      row >= board.length ||
+      col >= board.length
+    ) {
+      return;
+    }
+    const color = board[row][col];
+    if (!color) return;
+    board[row][col] = null;
+    if (color === 'black') {
+      bonusCaptures.white += 1;
+    } else {
+      bonusCaptures.black += 1;
+    }
+  });
+
+  return bonusCaptures;
+}
+
+function analyzeTerritory(board) {
+  if (!board || !board.length) {
+    return {
+      territory: { black: 0, white: 0 },
+      stones: { black: 0, white: 0 },
+    };
+  }
+
+  const size = board.length;
+  const visited = Array(size)
+    .fill(null)
+    .map(() => Array(size).fill(false));
+  const territory = { black: 0, white: 0 };
+  const stones = { black: 0, white: 0 };
+  const directions = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+
+  for (let r = 0; r < size; r += 1) {
+    for (let c = 0; c < size; c += 1) {
+      const cell = board[r][c];
+      if (cell === 'black') {
+        stones.black += 1;
+        continue;
+      }
+      if (cell === 'white') {
+        stones.white += 1;
+        continue;
+      }
+      if (visited[r][c]) continue;
+
+      const queue = [[r, c]];
+      const region = [];
+      const borderingColors = new Set();
+      visited[r][c] = true;
+
+      while (queue.length > 0) {
+        const [cr, cc] = queue.shift();
+        region.push([cr, cc]);
+
+        for (const [dr, dc] of directions) {
+          const nr = cr + dr;
+          const nc = cc + dc;
+          if (nr < 0 || nr >= size || nc < 0 || nc >= size) continue;
+          if (visited[nr][nc]) continue;
+
+          const neighbor = board[nr][nc];
+          if (neighbor === null) {
+            visited[nr][nc] = true;
+            queue.push([nr, nc]);
+          } else {
+            borderingColors.add(neighbor);
+          }
+        }
+      }
+
+      if (borderingColors.size === 1) {
+        const [owner] = borderingColors;
+        territory[owner] += region.length;
+      }
+    }
+  }
+
+  return { territory, stones };
+}
+
+function calculateChineseScore(board, captures, komi) {
+  const { territory, stones } = analyzeTerritory(board);
+  const blackArea = stones.black + territory.black;
+  const whiteArea = stones.white + territory.white;
+  const blackScore = blackArea;
+  const whiteScore = whiteArea + komi;
+  const winner =
+    blackScore === whiteScore ? null : whiteScore > blackScore ? 'white' : 'black';
+
+  return {
+    black: {
+      stones: stones.black,
+      territory: territory.black,
+      captures: captures.black,
+      area: blackArea,
+      score: blackScore,
+    },
+    white: {
+      stones: stones.white,
+      territory: territory.white,
+      captures: captures.white,
+      area: whiteArea,
+      komi,
+      score: whiteScore,
+    },
+    komi,
+    winner,
+  };
+}
+
+function calculateJapaneseScore(board, captures, komi) {
+  const { territory } = analyzeTerritory(board);
+  const blackScore = territory.black + captures.black;
+  const whiteScore = territory.white + captures.white + komi;
+  const winner =
+    blackScore === whiteScore ? null : whiteScore > blackScore ? 'white' : 'black';
+
+  return {
+    black: {
+      territory: territory.black,
+      captures: captures.black,
+      score: blackScore,
+    },
+    white: {
+      territory: territory.white,
+      captures: captures.white,
+      komi,
+      score: whiteScore,
+    },
+    komi,
+    winner,
+  };
 }
 
 module.exports = initGameSocket;

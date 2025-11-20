@@ -143,9 +143,21 @@ router.post('/start-rps', authGuard, async (req, res) => {
   }
 });
 
+const DEFAULT_SIZES = [9, 13, 19];
+const getDefaultKomi = (size) => {
+  if (size >= 19) return 6.5;
+  if (size >= 13) return 6.5;
+  return 5.5;
+};
+
+const createEmptyBoard = (size) => Array(size).fill(null).map(() => Array(size).fill(null));
+
+const getPositionHash = (board, nextTurn) =>
+  JSON.stringify({ board, next: nextTurn });
+
 router.post('/start-go', authGuard, async (req, res) => {
   try {
-    const { code } = req.body;
+    const { code, boardSize, komi } = req.body;
     const game = await Game.findOne({ code });
     if (!game) {
       return res.status(404).json({ message: 'Game not found' });
@@ -157,17 +169,30 @@ router.post('/start-go', authGuard, async (req, res) => {
       return res.status(400).json({ message: 'Waiting for opponent to join' });
     }
 
+    const resolvedSize = DEFAULT_SIZES.includes(Number(boardSize)) ? Number(boardSize) : 9;
+    const resolvedKomi =
+      typeof komi === 'number' && komi >= 0 ? komi : getDefaultKomi(resolvedSize);
+
+    const initialBoard = createEmptyBoard(resolvedSize);
+    const initialHash = getPositionHash(initialBoard, 'black');
+
     game.activeStage = 'GAME_OF_GO';
     game.status = 'READY';
     // Initialize Go board if not already set
-    if (!game.goBoard) {
-      game.goBoard = Array(9).fill(null).map(() => Array(9).fill(null));
-    }
+    game.goBoardSize = resolvedSize;
+    game.goBoard = initialBoard;
     game.goPreviousBoard = null;
     game.goCurrentTurn = 'black';
     game.goCapturedBlack = 0;
     game.goCapturedWhite = 0;
     game.goConsecutivePasses = 0;
+    game.goKomi = resolvedKomi;
+    game.goPositionHashes = [initialHash];
+    game.goDeadStones = [];
+    game.goPhase = 'PLAY';
+    game.goFinalScore = null;
+    game.goScoringConfirmations = [];
+    game.goPendingScoringMethod = 'chinese';
     await game.save();
     await game.populate([
       { path: 'host', select: 'username avatarColor' },
