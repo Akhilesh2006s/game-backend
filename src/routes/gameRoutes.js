@@ -61,8 +61,29 @@ router.post('/join', authGuard, async (req, res) => {
     // Notify host via socket that guest has joined
     if (ioInstance) {
       const guestDisplayName = req.user.studentName || req.user.username;
+      // Ensure game is properly populated before sending
+      const gameData = {
+        _id: game._id,
+        code: game.code,
+        host: {
+          _id: game.host._id,
+          username: game.host.username,
+          studentName: game.host.studentName,
+          avatarColor: game.host.avatarColor,
+        },
+        guest: {
+          _id: game.guest._id,
+          username: game.guest.username,
+          studentName: game.guest.studentName,
+          avatarColor: game.guest.avatarColor,
+        },
+        status: game.status,
+        activeStage: game.activeStage,
+        createdAt: game.createdAt,
+        updatedAt: game.updatedAt,
+      };
       ioInstance.to(game.code.toUpperCase()).emit('game:guest_joined', {
-        game: game.toObject(),
+        game: gameData,
         guestName: guestDisplayName,
       });
     }
