@@ -569,35 +569,23 @@ const initGameSocket = (io) => {
         return;
       }
 
-      // Determine roles based on round number
-      // Even rounds: Host chooses, Guest guesses
-      // Odd rounds: Guest chooses, Host guesses
-      const isEvenRound = state.roundNumber % 2 === 0;
-      const chooserId = isEvenRound ? hostId : guestId;
-      const guesserId = isEvenRound ? guestId : hostId;
-      const chooserChoice = isEvenRound ? hostChoice : guestChoice;
-      const guesserChoice = isEvenRound ? guestChoice : hostChoice;
-
-      const guesserWon = chooserChoice === guesserChoice;
+      // Constant roles: Host always chooses, Guest always chooses
+      // If both choose the same: Host wins
+      // If they choose differently: Guest wins
+      const hostWon = hostChoice === guestChoice;
       let winnerUserId = null;
       let winner = null;
 
-      if (guesserWon) {
-        winnerUserId = guesserId === hostId ? game.host : game.guest;
-        winner = guesserId === hostId ? 'host' : 'guest';
-        if (winner === 'host') {
-          game.hostPenniesScore += 1;
-        } else {
-          game.guestPenniesScore += 1;
-        }
+      if (hostWon) {
+        // Same choice = Host wins
+        winnerUserId = game.host;
+        winner = 'host';
+        game.hostPenniesScore += 1;
       } else {
-        winnerUserId = chooserId === hostId ? game.host : game.guest;
-        winner = chooserId === hostId ? 'host' : 'guest';
-        if (winner === 'host') {
-          game.hostPenniesScore += 1;
-        } else {
-          game.guestPenniesScore += 1;
-        }
+        // Different choice = Guest wins
+        winnerUserId = game.guest;
+        winner = 'guest';
+        game.guestPenniesScore += 1;
       }
 
       game.rounds.push({
@@ -607,9 +595,9 @@ const initGameSocket = (io) => {
           { player: game.guest, choice: guestChoice },
         ],
         winner: winnerUserId,
-        summary: guesserWon
-          ? `${guesserId === hostId ? (game.host.studentName || game.host.username) : (game.guest.studentName || game.guest.username)} guessed correctly!`
-          : `${chooserId === hostId ? (game.host.studentName || game.host.username) : (game.guest.studentName || game.guest.username)} won by choosing ${chooserChoice}.`,
+        summary: hostWon
+          ? `Both chose ${hostChoice}. ${game.host.studentName || game.host.username} wins!`
+          : `${game.host.studentName || game.host.username} chose ${hostChoice}, ${game.guest.studentName || game.guest.username} chose ${guestChoice}. ${game.guest.studentName || game.guest.username} wins!`,
       });
 
       state.roundNumber += 1;
@@ -626,17 +614,12 @@ const initGameSocket = (io) => {
         await game.save();
       }
 
-      const chooserName = chooserId === hostId ? (game.host.studentName || game.host.username) : (game.guest.studentName || game.guest.username);
-      const guesserName = guesserId === hostId ? (game.host.studentName || game.host.username) : (game.guest.studentName || game.guest.username);
-
       const resultPayload = {
         code: upper,
         winner: isGameComplete ? (game.hostPenniesScore >= 10 ? 'host' : 'guest') : winner,
-        chooserChoice,
-        guesserChoice,
-        chooserName,
-        guesserName,
-        guesserWon,
+        hostChoice,
+        guestChoice,
+        hostWon,
         hostScore: game.hostPenniesScore,
         guestScore: game.guestPenniesScore,
         roundNumber: state.roundNumber - 1,
