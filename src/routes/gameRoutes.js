@@ -6,6 +6,12 @@ const generateMatchCode = require('../utils/generateMatchCode');
 
 const router = express.Router();
 
+// Store io instance - will be set by index.js
+let ioInstance = null;
+router.setIO = (io) => {
+  ioInstance = io;
+};
+
 router.post('/create', authGuard, async (req, res) => {
   try {
     let code;
@@ -51,6 +57,15 @@ router.post('/join', authGuard, async (req, res) => {
       { path: 'host', select: 'username studentName avatarColor' },
       { path: 'guest', select: 'username studentName avatarColor' },
     ]);
+
+    // Notify host via socket that guest has joined
+    if (ioInstance) {
+      const guestDisplayName = req.user.studentName || req.user.username;
+      ioInstance.to(game.code.toUpperCase()).emit('game:guest_joined', {
+        game: game.toObject(),
+        guestName: guestDisplayName,
+      });
+    }
 
     res.json({ game });
   } catch (err) {
@@ -130,7 +145,7 @@ router.get('/', authGuard, async (req, res) => {
       .skip(parseInt(skip))
       .populate('host', 'username studentName avatarColor email')
       .populate('guest', 'username studentName avatarColor email')
-      .select('code host guest hostScore guestScore hostPenniesScore guestPenniesScore goFinalScore status activeStage createdAt updatedAt completedAt');
+      .select('code host guest hostScore guestScore hostPenniesScore guestPenniesScore goFinalScore goBoardSize goCapturedBlack goCapturedWhite status activeStage createdAt updatedAt completedAt');
 
     // Get total count for pagination
     const total = await Game.countDocuments(query);

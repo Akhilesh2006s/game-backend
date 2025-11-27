@@ -79,7 +79,6 @@ app.get('/', (_req, res) => {
 });
 
 app.use('/api/auth', authRoutes);
-app.use('/api/games', gameRoutes);
 
 const io = require('socket.io')(server, {
   cors: {
@@ -107,6 +106,11 @@ const io = require('socket.io')(server, {
 });
 
 initGameSocket(io);
+
+// Pass io instance to gameRoutes for socket notifications
+gameRoutes.setIO(io);
+
+app.use('/api/games', gameRoutes);
 
 connectDB(process.env.MONGO_URI).then(() => {
   server.listen(PORT, () => {
