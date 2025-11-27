@@ -21,25 +21,28 @@ router.post('/register', async (req, res) => {
       return res.status(400).json({ message: 'All fields are required' });
     }
 
+    // Normalize email to lowercase for all operations
+    const normalizedEmail = email.toLowerCase().trim();
+    
     // Validate email domain - only @bennett.edu.in allowed
-    const emailDomain = email.toLowerCase().trim();
-    if (!emailDomain.endsWith('@bennett.edu.in')) {
+    if (!normalizedEmail.endsWith('@bennett.edu.in')) {
       return res.status(400).json({ message: 'Only @bennett.edu.in email addresses are allowed' });
     }
 
-    const existing = await User.findOne({ email });
+    // Always query with normalized (lowercase) email
+    const existing = await User.findOne({ email: normalizedEmail });
     if (existing) {
       return res.status(409).json({ message: 'Email already registered' });
     }
 
-    // Fetch student name from Student database
-    const student = await Student.findOne({ email: email.toLowerCase().trim() });
+    // Fetch student name from Student database using normalized email
+    const student = await Student.findOne({ email: normalizedEmail });
     const studentName = student ? student.firstName : username;
 
     const passwordHash = await bcrypt.hash(password, 10);
     const user = await User.create({ 
       username, 
-      email, 
+      email: normalizedEmail, // Store normalized email
       passwordHash,
       studentName: studentName 
     });
@@ -65,13 +68,16 @@ router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
     
+    // Normalize email to lowercase for all operations
+    const normalizedEmail = email.toLowerCase().trim();
+    
     // Validate email domain - only @bennett.edu.in allowed
-    const emailDomain = email.toLowerCase().trim();
-    if (!emailDomain.endsWith('@bennett.edu.in')) {
+    if (!normalizedEmail.endsWith('@bennett.edu.in')) {
       return res.status(400).json({ message: 'Only @bennett.edu.in email addresses are allowed' });
     }
     
-    const user = await User.findOne({ email });
+    // Always query with normalized (lowercase) email
+    const user = await User.findOne({ email: normalizedEmail });
     if (!user) {
       return res.status(401).json({ message: 'Invalid credentials' });
     }
@@ -81,8 +87,8 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ message: 'Invalid credentials' });
     }
 
-    // Always fetch and update student name from Student database
-    const student = await Student.findOne({ email: email.toLowerCase().trim() });
+    // Always fetch and update student name from Student database using normalized email
+    const student = await Student.findOne({ email: normalizedEmail });
     if (student) {
       user.studentName = student.firstName;
       await user.save();
@@ -154,8 +160,8 @@ router.post('/refresh-name', authGuard, async (req, res) => {
       return res.status(404).json({ message: 'User not found' });
     }
 
-    // Fetch student name from Student database
-    const student = await Student.findOne({ email: user.email.toLowerCase().trim() });
+    // Fetch student name from Student database - user.email is already lowercase from schema
+    const student = await Student.findOne({ email: user.email });
     if (student) {
       user.studentName = student.firstName;
       await user.save();
