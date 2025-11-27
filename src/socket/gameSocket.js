@@ -390,7 +390,8 @@ const initGameSocket = (io) => {
 
       socket.join(upper);
       socket.emit('game:joined', { code: upper });
-      socket.to(upper).emit('game:peer_joined', socket.user.username);
+      const displayName = socket.user.studentName || socket.user.username;
+      socket.to(upper).emit('game:peer_joined', displayName);
     });
 
     socket.on('submitMove', async ({ code, move }) => {
@@ -437,8 +438,9 @@ const initGameSocket = (io) => {
 
       // Store move using normalized ID
       state.moves[userId] = move;
-      console.log(`[${upper}] Player ${socket.user.username} (${userId}) submitted: ${move}`);
-      socket.to(upper).emit('opponentLocked', socket.user.username);
+      const displayName = socket.user.studentName || socket.user.username;
+      console.log(`[${upper}] Player ${displayName} (${userId}) submitted: ${move}`);
+      socket.to(upper).emit('opponentLocked', displayName);
 
       // Check if both players have submitted
       const hostMove = state.moves[hostId];
@@ -520,7 +522,7 @@ const initGameSocket = (io) => {
         return;
       }
 
-      const game = await Game.findOne({ code: upper }).populate('host', 'username').populate('guest', 'username');
+      const game = await Game.findOne({ code: upper }).populate('host', 'username studentName').populate('guest', 'username studentName');
       if (!game) {
         socket.emit('game:error', 'Game not found');
         return;
@@ -554,8 +556,9 @@ const initGameSocket = (io) => {
       }
 
       state.choices[userId] = choice;
-      console.log(`[${upper}] Player ${socket.user.username} (${userId}) submitted: ${choice}`);
-      socket.to(upper).emit('penniesOpponentLocked', socket.user.username);
+      const displayName = socket.user.studentName || socket.user.username;
+      console.log(`[${upper}] Player ${displayName} (${userId}) submitted: ${choice}`);
+      socket.to(upper).emit('penniesOpponentLocked', displayName);
 
       const hostChoice = state.choices[hostId];
       const guestChoice = state.choices[guestId];
@@ -605,8 +608,8 @@ const initGameSocket = (io) => {
         ],
         winner: winnerUserId,
         summary: guesserWon
-          ? `${guesserId === hostId ? game.host.username : game.guest.username} guessed correctly!`
-          : `${chooserId === hostId ? game.host.username : game.guest.username} won by choosing ${chooserChoice}.`,
+          ? `${guesserId === hostId ? (game.host.studentName || game.host.username) : (game.guest.studentName || game.guest.username)} guessed correctly!`
+          : `${chooserId === hostId ? (game.host.studentName || game.host.username) : (game.guest.studentName || game.guest.username)} won by choosing ${chooserChoice}.`,
       });
 
       state.roundNumber += 1;
@@ -623,8 +626,8 @@ const initGameSocket = (io) => {
         await game.save();
       }
 
-      const chooserName = chooserId === hostId ? game.host.username : game.guest.username;
-      const guesserName = guesserId === hostId ? game.host.username : game.guest.username;
+      const chooserName = chooserId === hostId ? (game.host.studentName || game.host.username) : (game.guest.studentName || game.guest.username);
+      const guesserName = guesserId === hostId ? (game.host.studentName || game.host.username) : (game.guest.studentName || game.guest.username);
 
       const resultPayload = {
         code: upper,
@@ -662,7 +665,7 @@ const initGameSocket = (io) => {
         return;
       }
 
-      const game = await Game.findOne({ code: upper }).populate('host', 'username').populate('guest', 'username');
+      const game = await Game.findOne({ code: upper }).populate('host', 'username studentName').populate('guest', 'username studentName');
       if (!game) {
         socket.emit('game:error', 'Game not found');
         return;
@@ -822,7 +825,7 @@ const initGameSocket = (io) => {
         phase: game.goPhase,
         lastMove: { row, col, color },
         timeInfo,
-        message: `${socket.user.username} placed a ${color} stone at (${row + 1}, ${col + 1})${captured.length > 0 ? ` and captured ${captured.length} stone(s)` : ''}`,
+        message: `${(socket.user.studentName || socket.user.username)} placed a ${color} stone at (${row + 1}, ${col + 1})${captured.length > 0 ? ` and captured ${captured.length} stone(s)` : ''}`,
       };
 
       io.to(upper).emit('goMove', movePayload);
@@ -842,7 +845,7 @@ const initGameSocket = (io) => {
         return;
       }
 
-      const game = await Game.findOne({ code: upper }).populate('host', 'username').populate('guest', 'username');
+      const game = await Game.findOne({ code: upper }).populate('host', 'username studentName').populate('guest', 'username studentName');
       if (!game) {
         socket.emit('game:error', 'Game not found');
         return;
@@ -915,7 +918,7 @@ const initGameSocket = (io) => {
         currentTurn: game.goCurrentTurn,
         consecutivePasses: game.goConsecutivePasses,
         timeInfo,
-        message: `${socket.user.username} passed.${game.goConsecutivePasses >= 2 ? ' Both players passed. Entering scoring phase.' : ' Waiting for opponent.'}`,
+        message: `${(socket.user.studentName || socket.user.username)} passed.${game.goConsecutivePasses >= 2 ? ' Both players passed. Entering scoring phase.' : ' Waiting for opponent.'}`,
         phase: game.goPhase,
       };
       
@@ -960,7 +963,7 @@ const initGameSocket = (io) => {
         return;
       }
 
-      const game = await Game.findOne({ code: upper }).populate('host', 'username').populate('guest', 'username');
+      const game = await Game.findOne({ code: upper }).populate('host', 'username studentName').populate('guest', 'username studentName');
       if (!game) {
         socket.emit('game:error', 'Game not found');
         return;
@@ -1014,7 +1017,7 @@ const initGameSocket = (io) => {
       io.to(upper).emit('goDeadStonesUpdated', {
         code: upper,
         deadStones: game.goDeadStones,
-        updatedBy: socket.user.username,
+        updatedBy: socket.user.studentName || socket.user.username,
       });
     });
 
@@ -1033,7 +1036,7 @@ const initGameSocket = (io) => {
 
       const selectedMethod = method === 'japanese' ? 'japanese' : 'chinese';
 
-      const game = await Game.findOne({ code: upper }).populate('host', 'username').populate('guest', 'username');
+      const game = await Game.findOne({ code: upper }).populate('host', 'username studentName').populate('guest', 'username studentName');
       if (!game) {
         socket.emit('game:error', 'Game not found');
         return;
@@ -1091,7 +1094,7 @@ const initGameSocket = (io) => {
             method: selectedMethod,
             confirmations: game.goScoringConfirmations.length,
             required: requiredConfirmations,
-            message: `${socket.user.username} confirmed scoring using ${selectedMethod} rules.`,
+            message: `${(socket.user.studentName || socket.user.username)} confirmed scoring using ${selectedMethod} rules.`,
           });
           return;
         }

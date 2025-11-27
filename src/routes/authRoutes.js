@@ -8,7 +8,7 @@ const router = express.Router();
 
 const buildToken = (user) =>
   jwt.sign(
-    { id: user._id, username: user.username, email: user.email },
+    { id: user._id, username: user.username, studentName: user.studentName, email: user.email },
     process.env.JWT_SECRET,
     { expiresIn: '7d' }
   );
