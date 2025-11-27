@@ -21,7 +21,7 @@ router.post('/create', authGuard, async (req, res) => {
       activeStage: null, // No game selected yet
     });
 
-    await game.populate('host', 'username avatarColor');
+    await game.populate('host', 'username studentName avatarColor');
 
     res.status(201).json({ game });
   } catch (err) {
@@ -48,8 +48,8 @@ router.post('/join', authGuard, async (req, res) => {
     game.activeStage = null; // No game selected yet, show game selector
     await game.save();
     await game.populate([
-      { path: 'host', select: 'username avatarColor' },
-      { path: 'guest', select: 'username avatarColor' },
+      { path: 'host', select: 'username studentName avatarColor' },
+      { path: 'guest', select: 'username studentName avatarColor' },
     ]);
 
     res.json({ game });
@@ -61,13 +61,14 @@ router.post('/join', authGuard, async (req, res) => {
 // Get user game statistics - MUST be before /code/:code to avoid route conflicts
 router.get('/stats', authGuard, async (req, res) => {
   try {
-    const user = await User.findById(req.user.id).select('gameStats username');
+    const user = await User.findById(req.user.id).select('gameStats username studentName');
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }
 
     res.json({
       username: user.username,
+      studentName: user.studentName || user.username,
       stats: user.gameStats || {
         totalGames: 0,
         wins: 0,
@@ -94,8 +95,8 @@ router.get('/stats', authGuard, async (req, res) => {
 router.get('/code/:code', authGuard, async (req, res) => {
   try {
     const game = await Game.findOne({ code: req.params.code })
-      .populate('host', 'username avatarColor')
-      .populate('guest', 'username avatarColor');
+      .populate('host', 'username studentName avatarColor')
+      .populate('guest', 'username studentName avatarColor');
     if (!game) {
       return res.status(404).json({ message: 'Game not found' });
     }
@@ -112,8 +113,8 @@ router.get('/', authGuard, async (req, res) => {
     })
       .sort('-updatedAt')
       .limit(20)
-      .populate('host', 'username avatarColor')
-      .populate('guest', 'username avatarColor');
+      .populate('host', 'username studentName avatarColor')
+      .populate('guest', 'username studentName avatarColor');
 
     res.json({ games });
   } catch (err) {
@@ -139,8 +140,8 @@ router.post('/start-pennies', authGuard, async (req, res) => {
     game.status = 'READY';
     await game.save();
     await game.populate([
-      { path: 'host', select: 'username avatarColor' },
-      { path: 'guest', select: 'username avatarColor' },
+      { path: 'host', select: 'username studentName avatarColor' },
+      { path: 'guest', select: 'username studentName avatarColor' },
     ]);
 
     res.json({ game });
@@ -167,8 +168,8 @@ router.post('/start-rps', authGuard, async (req, res) => {
     game.status = 'READY';
     await game.save();
     await game.populate([
-      { path: 'host', select: 'username avatarColor' },
-      { path: 'guest', select: 'username avatarColor' },
+      { path: 'host', select: 'username studentName avatarColor' },
+      { path: 'guest', select: 'username studentName avatarColor' },
     ]);
 
     res.json({ game });
@@ -270,8 +271,8 @@ router.post('/start-go', authGuard, async (req, res) => {
     await game.save();
     console.log('After save - game.goBoardSize:', game.goBoardSize);
     await game.populate([
-      { path: 'host', select: 'username avatarColor' },
-      { path: 'guest', select: 'username avatarColor' },
+      { path: 'host', select: 'username studentName avatarColor' },
+      { path: 'guest', select: 'username studentName avatarColor' },
     ]);
 
     res.json({ game });

@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "nodemon src/index.js",
     "start": "node src/index.js",
-    "lint": "echo \"No lint configured\""
+    "lint": "echo \"No lint configured\"",
+    "import-students": "node src/scripts/importStudents.js"
   },
   "keywords": [],
   "author": "",
@@ -19,7 +20,8 @@
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.20.0",
     "nanoid": "^5.1.6",
-    "socket.io": "^4.8.1"
+    "socket.io": "^4.8.1",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "nodemon": "^3.1.11"
