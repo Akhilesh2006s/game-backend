@@ -456,5 +456,97 @@ router.get('/analysis/:code', authGuard, async (req, res) => {
   }
 });
 
+// Get leaderboard
+router.get('/leaderboard', authGuard, async (req, res) => {
+  try {
+    const { type, filter } = req.query; // type: 'all', 'group', 'classroom', 'team'
+    
+    // Get all users with their game stats
+    let users = await User.find({})
+      .select('username studentName email gameStats')
+      .lean();
+
+    // Get student data to match with users
+    const Student = require('../models/Student');
+    const students = await Student.find({}).lean();
+    const studentMap = new Map();
+    students.forEach(s => {
+      studentMap.set(s.email.toLowerCase(), s);
+    });
+
+    // Enrich users with student data
+    const enrichedUsers = users.map(user => {
+      const student = studentMap.get(user.email.toLowerCase());
+      return {
+        ...user,
+        groupId: student?.groupId || null,
+        classroomNumber: student?.classroomNumber || null,
+        teamNumber: student?.teamNumber || null,
+        fullName: student ? `${student.firstName} ${student.lastName || ''}`.trim() : (user.studentName || user.username),
+      };
+    });
+
+    // Filter based on type
+    let filteredUsers = enrichedUsers;
+    if (type === 'group' && filter) {
+      filteredUsers = enrichedUsers.filter(u => u.groupId === filter);
+    } else if (type === 'classroom' && filter) {
+      filteredUsers = enrichedUsers.filter(u => u.classroomNumber === filter);
+    } else if (type === 'team' && filter) {
+      filteredUsers = enrichedUsers.filter(u => u.teamNumber === filter);
+    }
+
+    // Sort by total wins (descending), then by total points
+    filteredUsers.sort((a, b) => {
+      const winsA = a.gameStats?.wins || 0;
+      const winsB = b.gameStats?.wins || 0;
+      if (winsB !== winsA) return winsB - winsA;
+      const pointsA = a.gameStats?.totalPoints || 0;
+      const pointsB = b.gameStats?.totalPoints || 0;
+      return pointsB - pointsA;
+    });
+
+    // Add rank
+    const leaderboard = filteredUsers.map((user, index) => ({
+      rank: index + 1,
+      username: user.username,
+      studentName: user.studentName,
+      fullName: user.fullName,
+      email: user.email,
+      groupId: user.groupId,
+      classroomNumber: user.classroomNumber,
+      teamNumber: user.teamNumber,
+      stats: {
+        totalGames: user.gameStats?.totalGames || 0,
+        wins: user.gameStats?.wins || 0,
+        losses: user.gameStats?.losses || 0,
+        draws: user.gameStats?.draws || 0,
+        totalPoints: user.gameStats?.totalPoints || 0,
+        rpsWins: user.gameStats?.rpsWins || 0,
+        goWins: user.gameStats?.goWins || 0,
+        penniesWins: user.gameStats?.penniesWins || 0,
+      },
+    }));
+
+    // Get unique filter values for dropdowns
+    const uniqueGroups = [...new Set(enrichedUsers.map(u => u.groupId).filter(Boolean))].sort();
+    const uniqueClassrooms = [...new Set(enrichedUsers.map(u => u.classroomNumber).filter(Boolean))].sort();
+    const uniqueTeams = [...new Set(enrichedUsers.map(u => u.teamNumber).filter(Boolean))].sort();
+
+    res.json({
+      leaderboard,
+      filters: {
+        groups: uniqueGroups,
+        classrooms: uniqueClassrooms,
+        teams: uniqueTeams,
+      },
+      total: leaderboard.length,
+    });
+  } catch (err) {
+    console.error('Error fetching leaderboard:', err);
+    res.status(500).json({ message: 'Failed to fetch leaderboard' });
+  }
+});
+
 module.exports = router;
 

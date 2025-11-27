@@ -7,6 +7,10 @@ const studentSchema = new mongoose.Schema(
       required: true,
       trim: true,
     },
+    lastName: {
+      type: String,
+      trim: true,
+    },
     enrollmentNo: {
       type: String,
       required: true,
@@ -20,6 +24,21 @@ const studentSchema = new mongoose.Schema(
       unique: true,
       lowercase: true,
       trim: true,
+    },
+    groupId: {
+      type: String,
+      trim: true,
+      index: true,
+    },
+    classroomNumber: {
+      type: String,
+      trim: true,
+      index: true,
+    },
+    teamNumber: {
+      type: String,
+      trim: true,
+      index: true,
     },
   },
   { timestamps: true }
