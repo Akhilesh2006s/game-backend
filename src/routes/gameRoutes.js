@@ -340,7 +340,7 @@ router.get('/analysis/:code', authGuard, async (req, res) => {
         roundNumber: index + 1,
         gameType: round.gameType,
         timestamp: round.createdAt,
-        moves: round.moves.map(move => ({
+        moves: (round.moves || []).map(move => ({
           player: {
             name: move.player?.studentName || move.player?.username || 'Unknown',
             id: move.player?._id || move.player?.id,
@@ -351,7 +351,7 @@ router.get('/analysis/:code', authGuard, async (req, res) => {
           col: move.col,
           color: move.color,
           captured: move.captured,
-        }),
+        })),
         winner: round.winner ? {
           name: round.winner.studentName || round.winner.username,
           isHost: String(round.winner._id || round.winner.id) === hostId,
@@ -374,14 +374,14 @@ router.get('/analysis/:code', authGuard, async (req, res) => {
       } else if (round.gameType === 'GAME_OF_GO') {
         goMoves.push(roundData);
         analysis.moveCount += 1;
-        if (round.moves[0]?.captured > 0) {
+        if (round.moves && round.moves[0] && round.moves[0].captured > 0) {
           analysis.highlights.push({
             type: 'capture',
             gameType: 'GAME_OF_GO',
             move: goMoves.length,
-            player: roundData.moves[0].player.name,
+            player: roundData.moves[0]?.player?.name || 'Unknown',
             captured: round.moves[0].captured,
-            position: `(${round.moves[0].row + 1}, ${round.moves[0].col + 1})`,
+            position: `(${(round.moves[0].row || 0) + 1}, ${(round.moves[0].col || 0) + 1})`,
           });
         }
       } else if (round.gameType === 'MATCHING_PENNIES') {
