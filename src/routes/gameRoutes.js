@@ -461,30 +461,49 @@ router.get('/leaderboard', authGuard, async (req, res) => {
   try {
     const { type, filter } = req.query; // type: 'all', 'group', 'classroom', 'team'
     
-    // Get all users with their game stats
-    let users = await User.find({})
+    // Get student data from extended list (CSV/Excel)
+    const Student = require('../models/Student');
+    const students = await Student.find({}).lean();
+    
+    if (students.length === 0) {
+      return res.json({
+        leaderboard: [],
+        filters: { groups: [], classrooms: [], teams: [] },
+        total: 0,
+      });
+    }
+
+    // Get emails from students to filter users
+    const studentEmails = students.map(s => s.email.toLowerCase());
+    
+    // Get only users whose email matches a student in the extended list
+    let users = await User.find({
+      email: { $in: studentEmails }
+    })
       .select('username studentName email gameStats')
       .lean();
 
-    // Get student data to match with users
-    const Student = require('../models/Student');
-    const students = await Student.find({}).lean();
+    // Create student map for quick lookup
     const studentMap = new Map();
     students.forEach(s => {
       studentMap.set(s.email.toLowerCase(), s);
     });
 
-    // Enrich users with student data
-    const enrichedUsers = users.map(user => {
-      const student = studentMap.get(user.email.toLowerCase());
-      return {
-        ...user,
-        groupId: student?.groupId || null,
-        classroomNumber: student?.classroomNumber || null,
-        teamNumber: student?.teamNumber || null,
-        fullName: student ? `${student.firstName} ${student.lastName || ''}`.trim() : (user.studentName || user.username),
-      };
-    });
+    // Enrich users with student data - only include users that have student data
+    const enrichedUsers = users
+      .map(user => {
+        const student = studentMap.get(user.email.toLowerCase());
+        if (!student) return null; // Skip if no student data found
+        
+        return {
+          ...user,
+          groupId: student.groupId || null,
+          classroomNumber: student.classroomNumber || null,
+          teamNumber: student.teamNumber || null,
+          fullName: `${student.firstName} ${student.lastName || ''}`.trim(),
+        };
+      })
+      .filter(user => user !== null); // Remove null entries
 
     // Filter based on type
     let filteredUsers = enrichedUsers;
