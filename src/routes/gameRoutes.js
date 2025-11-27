@@ -205,6 +205,34 @@ router.post('/start-pennies', authGuard, async (req, res) => {
       { path: 'guest', select: 'username studentName avatarColor' },
     ]);
 
+    // Notify both players via socket that game has started
+    if (ioInstance) {
+      const gameData = {
+        _id: game._id,
+        code: game.code,
+        host: {
+          _id: game.host._id,
+          username: game.host.username,
+          studentName: game.host.studentName,
+          avatarColor: game.host.avatarColor,
+        },
+        guest: {
+          _id: game.guest._id,
+          username: game.guest.username,
+          studentName: game.guest.studentName,
+          avatarColor: game.guest.avatarColor,
+        },
+        status: game.status,
+        activeStage: game.activeStage,
+        createdAt: game.createdAt,
+        updatedAt: game.updatedAt,
+      };
+      ioInstance.to(game.code.toUpperCase()).emit('game:started', {
+        game: gameData,
+        gameType: 'MATCHING_PENNIES',
+      });
+    }
+
     res.json({ game });
   } catch (err) {
     res.status(500).json({ message: 'Failed to start Matching Pennies' });
@@ -232,6 +260,34 @@ router.post('/start-rps', authGuard, async (req, res) => {
       { path: 'host', select: 'username studentName avatarColor' },
       { path: 'guest', select: 'username studentName avatarColor' },
     ]);
+
+    // Notify both players via socket that game has started
+    if (ioInstance) {
+      const gameData = {
+        _id: game._id,
+        code: game.code,
+        host: {
+          _id: game.host._id,
+          username: game.host.username,
+          studentName: game.host.studentName,
+          avatarColor: game.host.avatarColor,
+        },
+        guest: {
+          _id: game.guest._id,
+          username: game.guest.username,
+          studentName: game.guest.studentName,
+          avatarColor: game.guest.avatarColor,
+        },
+        status: game.status,
+        activeStage: game.activeStage,
+        createdAt: game.createdAt,
+        updatedAt: game.updatedAt,
+      };
+      ioInstance.to(game.code.toUpperCase()).emit('game:started', {
+        game: gameData,
+        gameType: 'ROCK_PAPER_SCISSORS',
+      });
+    }
 
     res.json({ game });
   } catch (err) {
@@ -335,6 +391,36 @@ router.post('/start-go', authGuard, async (req, res) => {
       { path: 'host', select: 'username studentName avatarColor' },
       { path: 'guest', select: 'username studentName avatarColor' },
     ]);
+
+    // Notify both players via socket that game has started
+    if (ioInstance) {
+      const gameData = {
+        _id: game._id,
+        code: game.code,
+        host: {
+          _id: game.host._id,
+          username: game.host.username,
+          studentName: game.host.studentName,
+          avatarColor: game.host.avatarColor,
+        },
+        guest: {
+          _id: game.guest._id,
+          username: game.guest.username,
+          studentName: game.guest.studentName,
+          avatarColor: game.guest.avatarColor,
+        },
+        status: game.status,
+        activeStage: game.activeStage,
+        goBoardSize: game.goBoardSize,
+        goKomi: game.goKomi,
+        createdAt: game.createdAt,
+        updatedAt: game.updatedAt,
+      };
+      ioInstance.to(game.code.toUpperCase()).emit('game:started', {
+        game: gameData,
+        gameType: 'GAME_OF_GO',
+      });
+    }
 
     res.json({ game });
   } catch (err) {
