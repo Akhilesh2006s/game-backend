@@ -108,16 +108,41 @@ router.get('/code/:code', authGuard, async (req, res) => {
 
 router.get('/', authGuard, async (req, res) => {
   try {
-    const games = await Game.find({
+    const { status, limit = 50, skip = 0 } = req.query;
+    
+    // Build query
+    const query = {
       $or: [{ host: req.user.id }, { guest: req.user.id }],
-    })
-      .sort('-updatedAt')
-      .limit(20)
-      .populate('host', 'username studentName avatarColor')
-      .populate('guest', 'username studentName avatarColor');
+    };
+    
+    // Add status filter if provided
+    if (status && status !== 'all') {
+      if (status === 'complete') {
+        query.status = 'COMPLETE';
+      } else if (status === 'in_progress') {
+        query.status = { $in: ['IN_PROGRESS', 'READY'] };
+      }
+    }
 
-    res.json({ games });
+    const games = await Game.find(query)
+      .sort('-updatedAt')
+      .limit(parseInt(limit))
+      .skip(parseInt(skip))
+      .populate('host', 'username studentName avatarColor email')
+      .populate('guest', 'username studentName avatarColor email')
+      .select('code host guest hostScore guestScore hostPenniesScore guestPenniesScore goFinalScore status activeStage createdAt updatedAt completedAt');
+
+    // Get total count for pagination
+    const total = await Game.countDocuments(query);
+
+    res.json({ 
+      games,
+      total,
+      limit: parseInt(limit),
+      skip: parseInt(skip),
+    });
   } catch (err) {
+    console.error('Error fetching games:', err);
     res.status(500).json({ message: 'Failed to load games' });
   }
 });
