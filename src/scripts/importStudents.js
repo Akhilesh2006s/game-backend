@@ -10,8 +10,8 @@ const importStudents = async () => {
     await connectDB(process.env.MONGO_URI);
     console.log('Connected to database');
 
-    // Read Excel file
-    const excelPath = path.join(__dirname, '../../../../client/Student_details.xlsx');
+    // Read Excel file - from server/src/scripts/ go up to root, then into client
+    const excelPath = path.join(__dirname, '../../../client/Student_details.xlsx');
     const workbook = XLSX.readFile(excelPath);
     const sheetName = workbook.SheetNames[0];
     const worksheet = workbook.Sheets[sheetName];
