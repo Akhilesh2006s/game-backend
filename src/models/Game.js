@@ -46,7 +46,7 @@ const gameSchema = new mongoose.Schema(
     goBoard: { type: [[String]], default: null }, // NxN board: null, 'black', or 'white'
     goPreviousBoard: { type: [[String]], default: null }, // For Ko rule - previous board state
     goBoardSize: { type: Number, default: 9 },
-    goKomi: { type: Number, default: 5.5 },
+    goKomi: { type: Number, default: 6.5 },
     goPositionHashes: { type: [String], default: [] }, // Superko tracking
     goCurrentTurn: { type: String, enum: ['black', 'white'], default: 'black' },
     goCapturedBlack: { type: Number, default: 0 },
@@ -68,6 +68,29 @@ const gameSchema = new mongoose.Schema(
       enum: ['chinese', 'japanese'],
       default: 'chinese',
     },
+    goTimeControl: {
+      mode: { type: String, enum: ['fischer', 'japanese', 'none'], default: 'none' },
+      mainTime: { type: Number, default: 0 }, // Main time in seconds
+      increment: { type: Number, default: 0 }, // Fischer increment in seconds
+      byoYomiTime: { type: Number, default: 0 }, // Byo-yomi period time in seconds
+      byoYomiPeriods: { type: Number, default: 0 }, // Number of byo-yomi periods
+    },
+    goTimeState: {
+      black: {
+        mainTime: { type: Number, default: 0 },
+        isByoYomi: { type: Boolean, default: false },
+        byoYomiTime: { type: Number, default: 0 },
+        byoYomiPeriods: { type: Number, default: 0 },
+      },
+      white: {
+        mainTime: { type: Number, default: 0 },
+        isByoYomi: { type: Boolean, default: false },
+        byoYomiTime: { type: Number, default: 0 },
+        byoYomiPeriods: { type: Number, default: 0 },
+      },
+    },
+    goLastMoveTime: { type: Date, default: null }, // When the current turn started
+    goTimeExpired: { type: String, enum: ['black', 'white'], default: null }, // Which player ran out of time
     status: {
       type: String,
       enum: ['WAITING', 'READY', 'IN_PROGRESS', 'COMPLETE'],

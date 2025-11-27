@@ -1,5 +1,6 @@
 const express = require('express');
 const Game = require('../models/Game');
+const User = require('../models/User');
 const authGuard = require('../middleware/auth');
 const generateMatchCode = require('../utils/generateMatchCode');
 
@@ -54,6 +55,39 @@ router.post('/join', authGuard, async (req, res) => {
     res.json({ game });
   } catch (err) {
     res.status(500).json({ message: 'Failed to join game' });
+  }
+});
+
+// Get user game statistics - MUST be before /code/:code to avoid route conflicts
+router.get('/stats', authGuard, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id).select('gameStats username');
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    res.json({
+      username: user.username,
+      stats: user.gameStats || {
+        totalGames: 0,
+        wins: 0,
+        losses: 0,
+        draws: 0,
+        totalPoints: 0,
+        goWins: 0,
+        goLosses: 0,
+        goPoints: 0,
+        rpsWins: 0,
+        rpsLosses: 0,
+        rpsPoints: 0,
+        penniesWins: 0,
+        penniesLosses: 0,
+        penniesPoints: 0,
+      },
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Failed to fetch user stats' });
   }
 });
 
@@ -144,11 +178,7 @@ router.post('/start-rps', authGuard, async (req, res) => {
 });
 
 const DEFAULT_SIZES = [9, 13, 19];
-const getDefaultKomi = (size) => {
-  if (size >= 19) return 6.5;
-  if (size >= 13) return 6.5;
-  return 5.5;
-};
+const FIXED_KOMI = 6.5; // Fixed komi compensation for all board sizes
 
 const createEmptyBoard = (size) => Array(size).fill(null).map(() => Array(size).fill(null));
 
@@ -157,7 +187,8 @@ const getPositionHash = (board, nextTurn) =>
 
 router.post('/start-go', authGuard, async (req, res) => {
   try {
-    const { code, boardSize, komi } = req.body;
+    const { code, boardSize, komi, timeControl } = req.body;
+    console.log('Backend received - boardSize:', boardSize, 'Type:', typeof boardSize, 'DEFAULT_SIZES:', DEFAULT_SIZES);
     const game = await Game.findOne({ code });
     if (!game) {
       return res.status(404).json({ message: 'Game not found' });
@@ -169,9 +200,12 @@ router.post('/start-go', authGuard, async (req, res) => {
       return res.status(400).json({ message: 'Waiting for opponent to join' });
     }
 
-    const resolvedSize = DEFAULT_SIZES.includes(Number(boardSize)) ? Number(boardSize) : 9;
-    const resolvedKomi =
-      typeof komi === 'number' && komi >= 0 ? komi : getDefaultKomi(resolvedSize);
+    const numBoardSize = Number(boardSize);
+    console.log('Converted boardSize to number:', numBoardSize, 'Is in DEFAULT_SIZES?', DEFAULT_SIZES.includes(numBoardSize));
+    const resolvedSize = DEFAULT_SIZES.includes(numBoardSize) ? numBoardSize : 9;
+    console.log('Resolved size:', resolvedSize, 'Previous game.goBoardSize:', game.goBoardSize);
+    // Komi is fixed at 6.5 for all board sizes
+    const resolvedKomi = FIXED_KOMI;
 
     const initialBoard = createEmptyBoard(resolvedSize);
     const initialHash = getPositionHash(initialBoard, 'black');
@@ -179,7 +213,7 @@ router.post('/start-go', authGuard, async (req, res) => {
     game.activeStage = 'GAME_OF_GO';
     game.status = 'READY';
     // Initialize Go board if not already set
-    game.goBoardSize = resolvedSize;
+    game.set('goBoardSize', resolvedSize);
     game.goBoard = initialBoard;
     game.goPreviousBoard = null;
     game.goCurrentTurn = 'black';
@@ -193,7 +227,48 @@ router.post('/start-go', authGuard, async (req, res) => {
     game.goFinalScore = null;
     game.goScoringConfirmations = [];
     game.goPendingScoringMethod = 'chinese';
+    
+    // Initialize time control
+    if (timeControl && timeControl.mode && timeControl.mode !== 'none' && timeControl.mainTime > 0) {
+      game.goTimeControl = {
+        mode: timeControl.mode, // 'fischer' or 'japanese'
+        mainTime: timeControl.mainTime,
+        increment: timeControl.increment || 0, // For Fischer
+        byoYomiTime: timeControl.byoYomiTime || 0, // For Japanese
+        byoYomiPeriods: timeControl.byoYomiPeriods || 0, // For Japanese
+      };
+      
+      // Initialize time state for both players
+      game.goTimeState = {
+        black: {
+          mainTime: timeControl.mainTime,
+          isByoYomi: false,
+          byoYomiTime: 0,
+          byoYomiPeriods: 0,
+        },
+        white: {
+          mainTime: timeControl.mainTime,
+          isByoYomi: false,
+          byoYomiTime: 0,
+          byoYomiPeriods: 0,
+        },
+      };
+      
+      game.goLastMoveTime = new Date();
+    } else {
+      // No time control
+      game.goTimeControl = { mode: 'none', mainTime: 0, increment: 0, byoYomiTime: 0, byoYomiPeriods: 0 };
+      game.goTimeState = {
+        black: { mainTime: 0, isByoYomi: false, byoYomiTime: 0, byoYomiPeriods: 0 },
+        white: { mainTime: 0, isByoYomi: false, byoYomiTime: 0, byoYomiPeriods: 0 },
+      };
+      game.goLastMoveTime = null;
+    }
+    game.goTimeExpired = null;
+    
+    console.log('Before save - game.goBoardSize:', game.goBoardSize, 'resolvedSize:', resolvedSize);
     await game.save();
+    console.log('After save - game.goBoardSize:', game.goBoardSize);
     await game.populate([
       { path: 'host', select: 'username avatarColor' },
       { path: 'guest', select: 'username avatarColor' },

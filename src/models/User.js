@@ -22,6 +22,22 @@ const userSchema = new mongoose.Schema(
       type: String,
       default: '#6d6afe',
     },
+    gameStats: {
+      totalGames: { type: Number, default: 0 },
+      wins: { type: Number, default: 0 },
+      losses: { type: Number, default: 0 },
+      draws: { type: Number, default: 0 },
+      totalPoints: { type: Number, default: 0 },
+      goWins: { type: Number, default: 0 },
+      goLosses: { type: Number, default: 0 },
+      goPoints: { type: Number, default: 0 },
+      rpsWins: { type: Number, default: 0 },
+      rpsLosses: { type: Number, default: 0 },
+      rpsPoints: { type: Number, default: 0 },
+      penniesWins: { type: Number, default: 0 },
+      penniesLosses: { type: Number, default: 0 },
+      penniesPoints: { type: Number, default: 0 },
+    },
   },
   { timestamps: true }
 );

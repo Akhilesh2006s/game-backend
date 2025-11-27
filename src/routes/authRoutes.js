@@ -34,6 +34,7 @@ router.post('/register', async (req, res) => {
         username: user.username,
         email: user.email,
         avatarColor: user.avatarColor,
+        gameStats: user.gameStats || {},
       },
     });
   } catch (err) {
@@ -62,6 +63,7 @@ router.post('/login', async (req, res) => {
         username: user.username,
         email: user.email,
         avatarColor: user.avatarColor,
+        gameStats: user.gameStats || {},
       },
     });
   } catch (err) {
