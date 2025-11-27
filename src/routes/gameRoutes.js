@@ -281,5 +281,155 @@ router.post('/start-go', authGuard, async (req, res) => {
   }
 });
 
+// Get game analysis/report
+router.get('/analysis/:code', authGuard, async (req, res) => {
+  try {
+    const game = await Game.findOne({ code: req.params.code.toUpperCase() })
+      .populate('host', 'username studentName avatarColor')
+      .populate('guest', 'username studentName avatarColor')
+      .populate('rounds.moves.player', 'username studentName')
+      .populate('rounds.winner', 'username studentName');
+
+    if (!game) {
+      return res.status(404).json({ message: 'Game not found' });
+    }
+
+    // Check if user is part of this game
+    const userId = String(req.user.id);
+    const hostId = String(game.host?._id || game.host?.id || game.host);
+    const guestId = game.guest ? String(game.guest?._id || game.guest?.id || game.guest) : null;
+    
+    if (userId !== hostId && userId !== guestId) {
+      return res.status(403).json({ message: 'You are not part of this game' });
+    }
+
+    // Build analysis data
+    const analysis = {
+      gameCode: game.code,
+      host: {
+        name: game.host.studentName || game.host.username,
+        username: game.host.username,
+        email: game.host.email,
+      },
+      guest: game.guest ? {
+        name: game.guest.studentName || game.guest.username,
+        username: game.guest.username,
+        email: game.guest.email,
+      } : null,
+      status: game.status,
+      activeStage: game.activeStage,
+      createdAt: game.createdAt,
+      completedAt: game.completedAt,
+      scores: {
+        rps: { host: game.hostScore || 0, guest: game.guestScore || 0 },
+        pennies: { host: game.hostPenniesScore || 0, guest: game.guestPenniesScore || 0 },
+        go: game.goFinalScore || null,
+      },
+      rounds: [],
+      moveCount: 0,
+      highlights: [],
+    };
+
+    // Process rounds by game type
+    const rpsRounds = [];
+    const goMoves = [];
+    const penniesRounds = [];
+
+    game.rounds.forEach((round, index) => {
+      const roundData = {
+        roundNumber: index + 1,
+        gameType: round.gameType,
+        timestamp: round.createdAt,
+        moves: round.moves.map(move => ({
+          player: {
+            name: move.player?.studentName || move.player?.username || 'Unknown',
+            id: move.player?._id || move.player?.id,
+            isHost: String(move.player?._id || move.player?.id) === hostId,
+          },
+          choice: move.choice,
+          row: move.row,
+          col: move.col,
+          color: move.color,
+          captured: move.captured,
+        }),
+        winner: round.winner ? {
+          name: round.winner.studentName || round.winner.username,
+          isHost: String(round.winner._id || round.winner.id) === hostId,
+        } : null,
+        summary: round.summary,
+      };
+
+      if (round.gameType === 'ROCK_PAPER_SCISSORS') {
+        rpsRounds.push(roundData);
+        analysis.moveCount += 2; // Each round has 2 moves
+        if (round.winner) {
+          analysis.highlights.push({
+            type: 'round_win',
+            gameType: 'ROCK_PAPER_SCISSORS',
+            round: rpsRounds.length,
+            winner: roundData.winner.name,
+            summary: round.summary,
+          });
+        }
+      } else if (round.gameType === 'GAME_OF_GO') {
+        goMoves.push(roundData);
+        analysis.moveCount += 1;
+        if (round.moves[0]?.captured > 0) {
+          analysis.highlights.push({
+            type: 'capture',
+            gameType: 'GAME_OF_GO',
+            move: goMoves.length,
+            player: roundData.moves[0].player.name,
+            captured: round.moves[0].captured,
+            position: `(${round.moves[0].row + 1}, ${round.moves[0].col + 1})`,
+          });
+        }
+      } else if (round.gameType === 'MATCHING_PENNIES') {
+        penniesRounds.push(roundData);
+        analysis.moveCount += 2; // Each round has 2 moves
+        if (round.winner) {
+          analysis.highlights.push({
+            type: 'round_win',
+            gameType: 'MATCHING_PENNIES',
+            round: penniesRounds.length,
+            winner: roundData.winner.name,
+            summary: round.summary,
+          });
+        }
+      }
+    });
+
+    // Add game-specific data
+    if (game.activeStage === 'GAME_OF_GO' || goMoves.length > 0) {
+      analysis.goData = {
+        boardSize: game.goBoardSize,
+        komi: game.goKomi,
+        capturedBlack: game.goCapturedBlack,
+        capturedWhite: game.goCapturedWhite,
+        finalScore: game.goFinalScore,
+        moves: goMoves,
+        totalMoves: goMoves.length,
+      };
+    }
+
+    analysis.rounds = {
+      rockPaperScissors: rpsRounds,
+      matchingPennies: penniesRounds,
+      gameOfGo: goMoves,
+    };
+
+    analysis.totalRounds = {
+      rps: rpsRounds.length,
+      pennies: penniesRounds.length,
+      go: goMoves.length,
+    };
+
+    res.json({ analysis });
+  } catch (err) {
+    console.error('Error fetching game analysis:', err);
+    res.status(500).json({ message: 'Failed to fetch game analysis' });
+  }
+});
+
 module.exports = router;
 

@@ -20,6 +20,10 @@ const roundSchema = new mongoose.Schema(
       {
         player: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
         choice: { type: String },
+        row: { type: Number },
+        col: { type: Number },
+        color: { type: String },
+        captured: { type: Number },
       },
     ],
     winner: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },

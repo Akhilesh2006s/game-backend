@@ -790,6 +790,24 @@ const initGameSocket = (io) => {
       game.goCurrentTurn = color === 'black' ? 'white' : 'black';
       game.status = 'IN_PROGRESS';
 
+      // Store move in rounds for analysis
+      const movePlayer = color === 'black' ? game.host : game.guest;
+      game.rounds.push({
+        gameType: 'GAME_OF_GO',
+        moves: [
+          {
+            player: movePlayer,
+            choice: `place:${row}:${col}:${color}`,
+            row,
+            col,
+            color,
+            captured: captured.length,
+          },
+        ],
+        winner: null,
+        summary: `${(socket.user.studentName || socket.user.username)} placed ${color} at (${row + 1}, ${col + 1})${captured.length > 0 ? `, captured ${captured.length} stone(s)` : ''}`,
+      });
+
       await game.save();
 
       const timeInfo = {
@@ -887,6 +905,21 @@ const initGameSocket = (io) => {
 
       // Increment consecutive passes
       game.goConsecutivePasses += 1;
+      
+      // Store pass move in rounds for analysis
+      const passPlayer = expectedColor === 'black' ? game.host : game.guest;
+      game.rounds.push({
+        gameType: 'GAME_OF_GO',
+        moves: [
+          {
+            player: passPlayer,
+            choice: 'pass',
+            color: expectedColor,
+          },
+        ],
+        winner: null,
+        summary: `${(socket.user.studentName || socket.user.username)} passed`,
+      });
       
       // Switch turn
       game.goCurrentTurn = expectedColor === 'black' ? 'white' : 'black';
