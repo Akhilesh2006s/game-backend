@@ -587,6 +587,11 @@ router.get('/leaderboard', authGuard, async (req, res) => {
     const Student = require('../models/Student');
     const students = await Student.find({}).lean();
     
+    // Get ALL unique groups, classrooms, and teams from all students (for dropdown options)
+    const allUniqueGroups = [...new Set(students.map(s => s.groupId).filter(Boolean))].sort();
+    const allUniqueClassrooms = [...new Set(students.map(s => s.classroomNumber).filter(Boolean))].sort();
+    const allUniqueTeams = [...new Set(students.map(s => s.teamNumber).filter(Boolean))].sort();
+    
     if (students.length === 0) {
       return res.json({
         leaderboard: [],
@@ -669,10 +674,10 @@ router.get('/leaderboard', authGuard, async (req, res) => {
       },
     }));
 
-    // Get unique filter values for dropdowns
-    const uniqueGroups = [...new Set(enrichedUsers.map(u => u.groupId).filter(Boolean))].sort();
-    const uniqueClassrooms = [...new Set(enrichedUsers.map(u => u.classroomNumber).filter(Boolean))].sort();
-    const uniqueTeams = [...new Set(enrichedUsers.map(u => u.teamNumber).filter(Boolean))].sort();
+    // Use the unique groups/classrooms/teams from ALL students (already calculated above)
+    const uniqueGroups = allUniqueGroups;
+    const uniqueClassrooms = allUniqueClassrooms;
+    const uniqueTeams = allUniqueTeams;
 
     res.json({
       leaderboard,
