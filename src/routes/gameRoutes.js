@@ -265,6 +265,107 @@ router.post('/start-pennies', authGuard, async (req, res) => {
   }
 });
 
+// End game early (for RPS and Matching Pennies)
+router.post('/end-game', authGuard, async (req, res) => {
+  try {
+    const { code } = req.body;
+    const game = await Game.findOne({ code });
+    if (!game) {
+      return res.status(404).json({ message: 'Game not found' });
+    }
+    if (String(game.host) !== req.user.id && String(game.guest) !== req.user.id) {
+      return res.status(403).json({ message: 'You are not part of this game' });
+    }
+    if (!game.guest) {
+      return res.status(400).json({ message: 'Waiting for opponent to join' });
+    }
+    if (game.status === 'COMPLETE') {
+      return res.status(400).json({ message: 'Game is already complete' });
+    }
+    if (game.activeStage !== 'ROCK_PAPER_SCISSORS' && game.activeStage !== 'MATCHING_PENNIES') {
+      return res.status(400).json({ message: 'Can only end Rock Paper Scissors or Matching Pennies games' });
+    }
+
+    // Calculate winner based on current scores
+    let winner = null;
+    if (game.activeStage === 'ROCK_PAPER_SCISSORS') {
+      if (game.hostScore > game.guestScore) {
+        winner = 'host';
+      } else if (game.guestScore > game.hostScore) {
+        winner = 'guest';
+      } else {
+        winner = null; // Draw
+      }
+    } else if (game.activeStage === 'MATCHING_PENNIES') {
+      if (game.hostPenniesScore > game.guestPenniesScore) {
+        winner = 'host';
+      } else if (game.guestPenniesScore > game.hostPenniesScore) {
+        winner = 'guest';
+      } else {
+        winner = null; // Draw
+      }
+    }
+
+    // Mark game as complete
+    game.status = 'COMPLETE';
+    game.completedAt = new Date();
+    await game.save();
+
+    // Update user stats
+    const { updateUserStats } = require('../socket/gameSocket');
+    await updateUserStats(game);
+
+    // Populate game for response
+    await game.populate([
+      { path: 'host', select: 'username studentName avatarColor' },
+      { path: 'guest', select: 'username studentName avatarColor' },
+    ]);
+
+    // Notify both players via socket
+    if (ioInstance) {
+      const gameData = {
+        _id: game._id,
+        code: game.code,
+        host: {
+          _id: game.host._id,
+          username: game.host.username,
+          studentName: game.host.studentName,
+          avatarColor: game.host.avatarColor,
+        },
+        guest: {
+          _id: game.guest._id,
+          username: game.guest.username,
+          studentName: game.guest.studentName,
+          avatarColor: game.guest.avatarColor,
+        },
+        status: game.status,
+        activeStage: game.activeStage,
+        hostScore: game.hostScore,
+        guestScore: game.guestScore,
+        hostPenniesScore: game.hostPenniesScore,
+        guestPenniesScore: game.guestPenniesScore,
+        completedAt: game.completedAt,
+      };
+      ioInstance.to(game.code.toUpperCase()).emit('game:ended', {
+        game: gameData,
+        winner,
+        gameType: game.activeStage,
+      });
+    }
+
+    res.json({ 
+      game,
+      winner,
+      message: winner 
+        ? `${winner === 'host' ? game.host.studentName || game.host.username : game.guest.studentName || game.guest.username} wins!`
+        : 'Game ended in a draw!'
+    });
+  } catch (err) {
+    console.error('Error ending game:', err);
+    res.status(500).json({ message: 'Failed to end game' });
+  }
+});
+
 router.post('/start-rps', authGuard, async (req, res) => {
   try {
     const { code } = req.body;

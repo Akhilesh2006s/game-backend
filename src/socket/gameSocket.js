@@ -269,13 +269,15 @@ async function updateUserStats(game) {
 
     // Determine winner and points based on game type
     if (gameType === 'ROCK_PAPER_SCISSORS') {
-      hostWon = game.hostScore >= 10;
-      guestWon = game.guestScore >= 10;
+      // Winner is determined by higher score (can be early end or first to 10)
+      hostWon = game.hostScore > game.guestScore;
+      guestWon = game.guestScore > game.hostScore;
       hostPoints = game.hostScore;
       guestPoints = game.guestScore;
     } else if (gameType === 'MATCHING_PENNIES') {
-      hostWon = game.hostPenniesScore >= 10;
-      guestWon = game.guestPenniesScore >= 10;
+      // Winner is determined by higher score (can be early end or first to 10)
+      hostWon = game.hostPenniesScore > game.guestPenniesScore;
+      guestWon = game.guestPenniesScore > game.hostPenniesScore;
       hostPoints = game.hostPenniesScore;
       guestPoints = game.guestPenniesScore;
     } else if (gameType === 'GAME_OF_GO' && game.goFinalScore) {
@@ -1425,4 +1427,5 @@ function calculateJapaneseScore(board, captures, komi) {
 }
 
 module.exports = initGameSocket;
+module.exports.updateUserStats = updateUserStats;
 
