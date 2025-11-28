@@ -8,7 +8,8 @@
     "start": "node src/index.js",
     "lint": "echo \"No lint configured\"",
     "import-students": "node src/scripts/importStudents.js",
-    "import-extended": "node src/scripts/importExtendedList.js"
+    "import-extended": "node src/scripts/importExtendedList.js",
+    "create-admin": "node src/scripts/createAdmin.js"
   },
   "keywords": [],
   "author": "",

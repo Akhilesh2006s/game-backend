@@ -6,6 +6,7 @@ const http = require('http');
 const connectDB = require('./config/db');
 const authRoutes = require('./routes/authRoutes');
 const gameRoutes = require('./routes/gameRoutes');
+const adminRoutes = require('./routes/adminRoutes');
 const initGameSocket = require('./socket/gameSocket');
 
 const PORT = process.env.PORT || 5000;
@@ -85,6 +86,7 @@ app.get('/', (_req, res) => {
 });
 
 app.use('/api/auth', authRoutes);
+app.use('/api/admin', adminRoutes);
 
 const io = require('socket.io')(server, {
   cors: {

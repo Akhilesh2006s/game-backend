@@ -26,6 +26,11 @@ const userSchema = new mongoose.Schema(
       type: String,
       default: '#6d6afe',
     },
+    role: {
+      type: String,
+      enum: ['student', 'admin'],
+      default: 'student',
+    },
     gameStats: {
       totalGames: { type: Number, default: 0 },
       wins: { type: Number, default: 0 },

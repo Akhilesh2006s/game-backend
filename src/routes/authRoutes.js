@@ -9,7 +9,7 @@ const router = express.Router();
 
 const buildToken = (user) =>
   jwt.sign(
-    { id: user._id, username: user.username, studentName: user.studentName, email: user.email },
+    { id: user._id, username: user.username, studentName: user.studentName, email: user.email, role: user.role || 'student' },
     process.env.JWT_SECRET,
     { expiresIn: '7d' }
   );
@@ -71,11 +71,6 @@ router.post('/login', async (req, res) => {
     // Normalize email to lowercase for all operations
     const normalizedEmail = email.toLowerCase().trim();
     
-    // Validate email domain - only @bennett.edu.in allowed
-    if (!normalizedEmail.endsWith('@bennett.edu.in')) {
-      return res.status(400).json({ message: 'Only @bennett.edu.in email addresses are allowed' });
-    }
-    
     // Always query with normalized (lowercase) email
     const user = await User.findOne({ email: normalizedEmail });
     if (!user) {
@@ -85,6 +80,27 @@ router.post('/login', async (req, res) => {
     const match = await bcrypt.compare(password, user.passwordHash);
     if (!match) {
       return res.status(401).json({ message: 'Invalid credentials' });
+    }
+
+    // Admin users skip student name lookup
+    if (user.role === 'admin') {
+      return res.json({
+        token: buildToken(user),
+        user: {
+          id: user._id,
+          username: user.username,
+          studentName: user.studentName || user.username,
+          email: user.email,
+          avatarColor: user.avatarColor,
+          role: user.role,
+          gameStats: user.gameStats || {},
+        },
+      });
+    }
+
+    // Validate email domain for non-admin users - only @bennett.edu.in allowed
+    if (!normalizedEmail.endsWith('@bennett.edu.in')) {
+      return res.status(400).json({ message: 'Only @bennett.edu.in email addresses are allowed' });
     }
 
     // Always fetch and update student name from Student database using normalized email
@@ -106,6 +122,7 @@ router.post('/login', async (req, res) => {
         studentName: user.studentName || user.username,
         email: user.email,
         avatarColor: user.avatarColor,
+        role: user.role || 'student',
         gameStats: user.gameStats || {},
       },
     });
