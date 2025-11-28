@@ -16,8 +16,12 @@ const vercelRegexPatterns = [
   /^https:\/\/.*\.vercel\.app$/ // Allow any Vercel domain
 ];
 
+// Allow any localhost port for development
+const localhostRegex = /^http:\/\/localhost:\d+$/;
+
 const defaultStringOrigins = [
-  'http://localhost:5173', 
+  'http://localhost:5173',
+  'http://localhost:5174', 
   'https://games-frontend-mocha.vercel.app',
   'https://games-frontend-92qdx6knh-akhilesh2006s-projects.vercel.app'
 ];
@@ -27,10 +31,12 @@ const allowedOrigins = process.env.CLIENT_ORIGIN
   ? [
       ...process.env.CLIENT_ORIGIN.split(',').map(origin => origin.trim()),
       ...defaultStringOrigins,
+      localhostRegex,
       ...vercelRegexPatterns
     ]
   : [
       ...defaultStringOrigins,
+      localhostRegex,
       ...vercelRegexPatterns
     ];
 
