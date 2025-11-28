@@ -598,13 +598,19 @@ router.get('/analysis/:code', authGuard, async (req, res) => {
       return res.status(404).json({ message: 'Game not found' });
     }
 
-    // Check if user is part of this game
-    const userId = String(req.user.id);
-    const hostId = String(game.host?._id || game.host?.id || game.host);
-    const guestId = game.guest ? String(game.guest?._id || game.guest?.id || game.guest) : null;
-    
-    if (userId !== hostId && userId !== guestId) {
-      return res.status(403).json({ message: 'You are not part of this game' });
+    // Check if user is admin - admins can view any game
+    const user = await User.findById(req.user.id);
+    const isAdmin = user && user.role === 'admin';
+
+    // Check if user is part of this game (unless admin)
+    if (!isAdmin) {
+      const userId = String(req.user.id);
+      const hostId = String(game.host?._id || game.host?.id || game.host);
+      const guestId = game.guest ? String(game.guest?._id || game.guest?.id || game.guest) : null;
+      
+      if (userId !== hostId && userId !== guestId) {
+        return res.status(403).json({ message: 'You are not part of this game' });
+      }
     }
 
     // Build analysis data
