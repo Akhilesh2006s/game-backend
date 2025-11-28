@@ -153,9 +153,11 @@ router.get('/games', adminAuth, async (req, res) => {
         game.host?.studentName?.toLowerCase().includes(searchLower) ||
         game.host?.username?.toLowerCase().includes(searchLower) ||
         game.host?.email?.toLowerCase().includes(searchLower) ||
+        game.host?.enrollmentNo?.toLowerCase().includes(searchLower) ||
         game.guest?.studentName?.toLowerCase().includes(searchLower) ||
         game.guest?.username?.toLowerCase().includes(searchLower) ||
-        game.guest?.email?.toLowerCase().includes(searchLower)
+        game.guest?.email?.toLowerCase().includes(searchLower) ||
+        game.guest?.enrollmentNo?.toLowerCase().includes(searchLower)
       );
     }
     
