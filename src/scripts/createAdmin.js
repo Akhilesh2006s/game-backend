@@ -9,7 +9,7 @@ const createAdmin = async () => {
     await connectDB(process.env.MONGO_URI);
     console.log('Connected to database');
 
-    const adminEmail = 'gameamenity@bennett.edu.in';
+    const adminEmail = 'gameamenity@bennett.edu.in'.toLowerCase().trim();
     const adminPassword = 'Amenity';
     const adminUsername = 'Admin';
 

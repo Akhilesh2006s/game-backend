@@ -15,6 +15,12 @@ router.setIO = (io) => {
 
 router.post('/create', authGuard, async (req, res) => {
   try {
+    // Block admin users from creating games
+    const user = await User.findById(req.user.id);
+    if (user && user.role === 'admin') {
+      return res.status(403).json({ message: 'Admin users cannot create games' });
+    }
+
     let code;
     let exists = true;
     while (exists) {
@@ -38,6 +44,12 @@ router.post('/create', authGuard, async (req, res) => {
 
 router.post('/join', authGuard, async (req, res) => {
   try {
+    // Block admin users from joining games
+    const user = await User.findById(req.user.id);
+    if (user && user.role === 'admin') {
+      return res.status(403).json({ message: 'Admin users cannot join games' });
+    }
+
     const { code } = req.body;
     const game = await Game.findOne({ code });
     if (!game) {
@@ -211,6 +223,12 @@ router.get('/', authGuard, async (req, res) => {
 
 router.post('/start-pennies', authGuard, async (req, res) => {
   try {
+    // Block admin users from starting games
+    const user = await User.findById(req.user.id);
+    if (user && user.role === 'admin') {
+      return res.status(403).json({ message: 'Admin users cannot start games' });
+    }
+
     const { code } = req.body;
     const game = await Game.findOne({ code });
     if (!game) {
@@ -368,6 +386,12 @@ router.post('/end-game', authGuard, async (req, res) => {
 
 router.post('/start-rps', authGuard, async (req, res) => {
   try {
+    // Block admin users from starting games
+    const user = await User.findById(req.user.id);
+    if (user && user.role === 'admin') {
+      return res.status(403).json({ message: 'Admin users cannot start games' });
+    }
+
     const { code } = req.body;
     const game = await Game.findOne({ code });
     if (!game) {
@@ -432,6 +456,12 @@ const getPositionHash = (board, nextTurn) =>
 
 router.post('/start-go', authGuard, async (req, res) => {
   try {
+    // Block admin users from starting games
+    const user = await User.findById(req.user.id);
+    if (user && user.role === 'admin') {
+      return res.status(403).json({ message: 'Admin users cannot start games' });
+    }
+
     const { code, boardSize, komi, timeControl } = req.body;
     console.log('Backend received - boardSize:', boardSize, 'Type:', typeof boardSize, 'DEFAULT_SIZES:', DEFAULT_SIZES);
     const game = await Game.findOne({ code });

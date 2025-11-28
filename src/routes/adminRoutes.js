@@ -191,7 +191,7 @@ router.get('/student/:email', adminAuth, async (req, res) => {
     // Get student data
     const student = await Student.findOne({ email: normalizedEmail }).lean();
     
-    // Get all games for this user
+    // Get ALL games for this user (no limit)
     const games = await Game.find({
       $or: [
         { host: user._id },
@@ -201,21 +201,66 @@ router.get('/student/:email', adminAuth, async (req, res) => {
       .sort('-updatedAt')
       .populate('host', 'username studentName email')
       .populate('guest', 'username studentName email')
-      .select('code host guest hostScore guestScore hostPenniesScore guestPenniesScore goFinalScore status activeStage createdAt completedAt')
+      .select('code host guest hostScore guestScore hostPenniesScore guestPenniesScore goFinalScore goBoardSize goCapturedBlack goCapturedWhite status activeStage createdAt updatedAt completedAt')
       .lean();
     
-    // Calculate additional stats
+    // Add enrollment numbers to games
+    const gamesWithEnrollment = await Promise.all(
+      games.map(async (game) => {
+        if (game.host?.email) {
+          const hostStudent = await Student.findOne({ email: game.host.email.toLowerCase() });
+          if (hostStudent) {
+            game.host.enrollmentNo = hostStudent.enrollmentNo;
+          }
+        }
+        if (game.guest?.email) {
+          const guestStudent = await Student.findOne({ email: game.guest.email.toLowerCase() });
+          if (guestStudent) {
+            game.guest.enrollmentNo = guestStudent.enrollmentNo;
+          }
+        }
+        return game;
+      })
+    );
+    
+    // Calculate detailed stats
     const gameStats = {
       totalGames: games.length,
       completedGames: games.filter(g => g.status === 'COMPLETE').length,
+      inProgressGames: games.filter(g => g.status === 'IN_PROGRESS' || g.status === 'READY').length,
       rpsGames: games.filter(g => g.activeStage === 'ROCK_PAPER_SCISSORS').length,
       goGames: games.filter(g => g.activeStage === 'GAME_OF_GO').length,
       penniesGames: games.filter(g => g.activeStage === 'MATCHING_PENNIES').length,
     };
+
+    // Calculate win/loss breakdown per game type
+    const rpsWins = games.filter(g => 
+      g.activeStage === 'ROCK_PAPER_SCISSORS' && 
+      g.status === 'COMPLETE' &&
+      ((String(g.host._id) === String(user._id) && g.hostScore > g.guestScore) ||
+       (String(g.guest._id) === String(user._id) && g.guestScore > g.hostScore))
+    ).length;
+
+    const goWins = games.filter(g => 
+      g.activeStage === 'GAME_OF_GO' && 
+      g.status === 'COMPLETE' &&
+      g.goFinalScore &&
+      ((String(g.host._id) === String(user._id) && g.goFinalScore.winner === 'black') ||
+       (String(g.guest._id) === String(user._id) && g.goFinalScore.winner === 'white'))
+    ).length;
+
+    const penniesWins = games.filter(g => 
+      g.activeStage === 'MATCHING_PENNIES' && 
+      g.status === 'COMPLETE' &&
+      ((String(g.host._id) === String(user._id) && g.hostPenniesScore > g.guestPenniesScore) ||
+       (String(g.guest._id) === String(user._id) && g.guestPenniesScore > g.hostPenniesScore))
+    ).length;
     
     res.json({
       user: {
         ...user,
+        _id: user._id,
+        id: user._id,
         enrollmentNo: student?.enrollmentNo || '',
         groupId: student?.groupId || '',
         classroomNumber: student?.classroomNumber || '',
@@ -224,8 +269,13 @@ router.get('/student/:email', adminAuth, async (req, res) => {
         lastName: student?.lastName || '',
       },
       stats: user.gameStats || {},
-      gameStats,
-      recentGames: games.slice(0, 10), // Last 10 games
+      gameStats: {
+        ...gameStats,
+        rpsWins,
+        goWins,
+        penniesWins,
+      },
+      allGames: gamesWithEnrollment, // ALL games, not just recent
     });
   } catch (err) {
     console.error('Error fetching student stats:', err);
