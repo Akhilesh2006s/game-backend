@@ -724,6 +724,72 @@ router.get('/analysis/:code', authGuard, async (req, res) => {
       };
     }
 
+    // Calculate detailed RPS statistics
+    if (rpsRounds.length > 0) {
+      const hostWins = rpsRounds.filter(r => r.winner && r.winner.isHost).length;
+      const guestWins = rpsRounds.filter(r => r.winner && !r.winner.isHost).length;
+      const draws = rpsRounds.filter(r => !r.winner).length;
+      
+      // Count choices
+      const hostChoices = { rock: 0, paper: 0, scissors: 0 };
+      const guestChoices = { rock: 0, paper: 0, scissors: 0 };
+      
+      rpsRounds.forEach(round => {
+        round.moves.forEach(move => {
+          if (move.isHost && move.choice) {
+            hostChoices[move.choice] = (hostChoices[move.choice] || 0) + 1;
+          } else if (!move.isHost && move.choice) {
+            guestChoices[move.choice] = (guestChoices[move.choice] || 0) + 1;
+          }
+        });
+      });
+
+      analysis.rpsData = {
+        totalRounds: rpsRounds.length,
+        hostWins,
+        guestWins,
+        draws,
+        hostScore: game.hostScore || 0,
+        guestScore: game.guestScore || 0,
+        hostChoices,
+        guestChoices,
+        winner: game.hostScore > game.guestScore ? 'host' : game.guestScore > game.hostScore ? 'guest' : null,
+      };
+    }
+
+    // Calculate detailed Matching Pennies statistics
+    if (penniesRounds.length > 0) {
+      const hostWins = penniesRounds.filter(r => r.winner && r.winner.isHost).length;
+      const guestWins = penniesRounds.filter(r => r.winner && !r.winner.isHost).length;
+      const draws = penniesRounds.filter(r => !r.winner).length;
+      
+      // Count choices
+      const hostChoices = { heads: 0, tails: 0 };
+      const guestChoices = { heads: 0, tails: 0 };
+      
+      penniesRounds.forEach(round => {
+        round.moves.forEach(move => {
+          if (move.isHost && move.choice) {
+            hostChoices[move.choice] = (hostChoices[move.choice] || 0) + 1;
+          } else if (!move.isHost && move.choice) {
+            guestChoices[move.choice] = (guestChoices[move.choice] || 0) + 1;
+          }
+        });
+      });
+
+      analysis.penniesData = {
+        totalRounds: penniesRounds.length,
+        hostWins,
+        guestWins,
+        draws,
+        hostScore: game.hostPenniesScore || 0,
+        guestScore: game.guestPenniesScore || 0,
+        hostChoices,
+        guestChoices,
+        winner: game.hostPenniesScore > game.guestPenniesScore ? 'host' : game.guestPenniesScore > game.hostPenniesScore ? 'guest' : null,
+      };
+    }
+
     analysis.rounds = {
       rockPaperScissors: rpsRounds,
       matchingPennies: penniesRounds,
