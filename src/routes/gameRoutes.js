@@ -1,6 +1,7 @@
 const express = require('express');
 const Game = require('../models/Game');
 const User = require('../models/User');
+const Student = require('../models/Student');
 const authGuard = require('../middleware/auth');
 const generateMatchCode = require('../utils/generateMatchCode');
 
@@ -168,11 +169,36 @@ router.get('/', authGuard, async (req, res) => {
       .populate('guest', 'username studentName avatarColor email')
       .select('code host guest hostScore guestScore hostPenniesScore guestPenniesScore goFinalScore goBoardSize goCapturedBlack goCapturedWhite status activeStage createdAt updatedAt completedAt');
 
+    // Fetch enrollment numbers for host and guest from Student model
+    const gamesWithEnrollment = await Promise.all(
+      games.map(async (game) => {
+        const gameObj = game.toObject();
+        
+        // Get enrollment number for host
+        if (gameObj.host?.email) {
+          const hostStudent = await Student.findOne({ email: gameObj.host.email.toLowerCase() });
+          if (hostStudent) {
+            gameObj.host.enrollmentNo = hostStudent.enrollmentNo;
+          }
+        }
+        
+        // Get enrollment number for guest
+        if (gameObj.guest?.email) {
+          const guestStudent = await Student.findOne({ email: gameObj.guest.email.toLowerCase() });
+          if (guestStudent) {
+            gameObj.guest.enrollmentNo = guestStudent.enrollmentNo;
+          }
+        }
+        
+        return gameObj;
+      })
+    );
+
     // Get total count for pagination
     const total = await Game.countDocuments(query);
 
     res.json({ 
-      games,
+      games: gamesWithEnrollment,
       total,
       limit: parseInt(limit),
       skip: parseInt(skip),
