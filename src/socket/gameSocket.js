@@ -138,7 +138,7 @@ function updateTimeOnMove(game, color) {
 
 /**
  * Get current time remaining for display
- * Only subtracts elapsed time for the ACTIVE player
+ * Returns the stored time directly (already decremented by updateCurrentPlayerTime)
  */
 function getCurrentTimeRemaining(game, color) {
   if (!game.goTimeControl || game.goTimeControl.mode === 'none') {
@@ -148,36 +148,31 @@ function getCurrentTimeRemaining(game, color) {
   const state = game.goTimeState[color];
   if (!state) return null;
 
-  // Only calculate elapsed time if this is the active player
-  const isActive = game.goCurrentTurn === color;
-  const elapsed = isActive ? getElapsedTime(game) : 0;
-  
+  // Return stored time directly - no need to recalculate elapsed time
+  // since updateCurrentPlayerTime already decrements it by 1 second per interval
   if (game.goTimeControl.mode === 'fischer') {
-    const remaining = Math.max(0, state.mainTime - elapsed);
     return {
       mode: 'fischer',
-      mainTime: remaining,
+      mainTime: state.mainTime,
       isByoYomi: false,
       byoYomiTime: null,
       byoYomiPeriods: null,
     };
   } else if (game.goTimeControl.mode === 'japanese') {
     if (!state.isByoYomi) {
-      const remaining = Math.max(0, state.mainTime - elapsed);
       return {
         mode: 'japanese',
-        mainTime: remaining,
+        mainTime: state.mainTime,
         isByoYomi: false,
         byoYomiTime: null,
         byoYomiPeriods: null,
       };
     } else {
-      const remaining = Math.max(0, state.byoYomiTime - elapsed);
       return {
         mode: 'japanese',
         mainTime: 0,
         isByoYomi: true,
-        byoYomiTime: remaining,
+        byoYomiTime: state.byoYomiTime,
         byoYomiPeriods: state.byoYomiPeriods,
       };
     }
