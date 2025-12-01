@@ -959,31 +959,60 @@ const initGameSocket = (io) => {
       };
       
       if (game.goConsecutivePasses >= 2) {
+        // Both players passed - automatically calculate and finalize score
         game.goPhase = 'SCORING';
         game.goScoringConfirmations = [];
         game.goPendingScoringMethod = DEFAULT_SCORING_METHOD;
         passPayload.phase = game.goPhase;
+
+        // Auto-confirm for both players
+        const hostId = String(game.host?._id || game.host?.id || game.host);
+        const guestId = String(game.guest?._id || game.guest?.id || game.guest);
+        const allPlayerIds = [hostId, guestId].filter(Boolean);
+        game.goScoringConfirmations = allPlayerIds;
+
+        // Calculate score immediately
+        const workingBoard = cloneBoard(game.goBoard || createBoard(game.goBoardSize || BOARD_DEFAULT_SIZE));
+        const deadCaptureBonus = removeDeadStonesForScoring(workingBoard, game.goDeadStones || []);
+        const totalCaptures = {
+          black: game.goCapturedBlack + deadCaptureBonus.black,
+          white: game.goCapturedWhite + deadCaptureBonus.white,
+        };
+
+        let scoreSummary;
+        if (DEFAULT_SCORING_METHOD === 'japanese') {
+          scoreSummary = calculateJapaneseScore(workingBoard, totalCaptures, game.goKomi);
+        } else {
+          scoreSummary = calculateChineseScore(workingBoard, totalCaptures, game.goKomi);
+        }
+
+        game.goCapturedBlack = totalCaptures.black;
+        game.goCapturedWhite = totalCaptures.white;
+        game.goFinalScore = { ...scoreSummary, method: DEFAULT_SCORING_METHOD };
+        game.goPhase = 'COMPLETE';
+        game.status = 'COMPLETE';
+        game.completedAt = new Date();
+        game.goScoringConfirmations = [];
+
+        await game.save();
+        await updateUserStats(game);
+
+        // Emit pass event first
+        io.to(upper).emit('goPass', passPayload);
+
+        // Then emit score finalized event
+        io.to(upper).emit('goScoreFinalized', {
+          code: upper,
+          method: DEFAULT_SCORING_METHOD,
+          ...scoreSummary,
+          message: 'Both players passed. Game complete!',
+        });
+
+        return; // Exit early since game is complete
       }
 
       await game.save();
       io.to(upper).emit('goPass', passPayload);
-
-      if (game.goPhase === 'SCORING') {
-        const scoringPayload = {
-          code: upper,
-          board: game.goBoard,
-          boardSize: game.goBoardSize || BOARD_DEFAULT_SIZE,
-          komi: game.goKomi,
-          captures: {
-            black: game.goCapturedBlack,
-            white: game.goCapturedWhite,
-          },
-          deadStones: game.goDeadStones || [],
-          message: 'Both players passed. Entering dead stone marking phase.',
-        };
-
-        io.to(upper).emit('goScoringStart', scoringPayload);
-      }
     });
 
     socket.on('toggleGoDeadStone', async ({ code, row, col }) => {
