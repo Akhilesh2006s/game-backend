@@ -183,7 +183,7 @@ function getCurrentTimeRemaining(game, color) {
 
 /**
  * Update time for current player (called periodically)
- * Decrements by exactly 1 second each interval
+ * Uses real elapsed time based on Date.now() instead of trusting setInterval
  */
 function updateCurrentPlayerTime(game) {
   if (!game.goTimeControl || game.goTimeControl.mode === 'none') {
@@ -194,49 +194,66 @@ function updateCurrentPlayerTime(game) {
   const state = game.goTimeState[currentColor];
   if (!state) return false;
 
-  // Decrement by exactly 1 second (not elapsed time)
+  if (!game.goLastMoveTime) return false;
+
+  // Calculate real elapsed time since last move
+  const now = new Date();
+  const elapsedSeconds = Math.floor((now - game.goLastMoveTime) / 1000);
+  
+  if (elapsedSeconds <= 0) return false; // No time has passed
+
   let updated = false;
+  let timeDeducted = 0;
 
   if (game.goTimeControl.mode === 'fischer') {
-    // Fischer: decrement mainTime by 1 second
-    if (state.mainTime > 0) {
-      state.mainTime = Math.max(0, state.mainTime - 1);
-      updated = true;
-      
-      if (state.mainTime <= 0) {
-        game.goTimeExpired = currentColor;
-      }
+    // Fischer: deduct real elapsed time
+    const previousTime = state.mainTime;
+    state.mainTime = Math.max(0, state.mainTime - elapsedSeconds);
+    timeDeducted = previousTime - state.mainTime;
+    updated = timeDeducted > 0;
+    
+    if (state.mainTime <= 0) {
+      game.goTimeExpired = currentColor;
     }
   } else if (game.goTimeControl.mode === 'japanese') {
     if (!state.isByoYomi) {
-      // Main time: decrement by 1 second
-      if (state.mainTime > 0) {
-        state.mainTime = Math.max(0, state.mainTime - 1);
-        updated = true;
-        
-        if (state.mainTime <= 0) {
-          state.isByoYomi = true;
-          state.byoYomiTime = game.goTimeControl.byoYomiTime;
-          state.byoYomiPeriods = game.goTimeControl.byoYomiPeriods;
-        }
+      // Main time: deduct real elapsed time
+      const previousTime = state.mainTime;
+      state.mainTime = Math.max(0, state.mainTime - elapsedSeconds);
+      timeDeducted = previousTime - state.mainTime;
+      updated = timeDeducted > 0;
+      
+      if (state.mainTime <= 0) {
+        state.isByoYomi = true;
+        state.byoYomiTime = game.goTimeControl.byoYomiTime;
+        state.byoYomiPeriods = game.goTimeControl.byoYomiPeriods;
       }
     } else {
-      // Byo Yomi: decrement byoYomiTime by 1 second
-      if (state.byoYomiTime > 0) {
-        state.byoYomiTime = Math.max(0, state.byoYomiTime - 1);
-        updated = true;
+      // Byo Yomi: deduct real elapsed time from period
+      const previousTime = state.byoYomiTime;
+      state.byoYomiTime = Math.max(0, state.byoYomiTime - elapsedSeconds);
+      timeDeducted = previousTime - state.byoYomiTime;
+      updated = timeDeducted > 0;
+      
+      if (state.byoYomiTime <= 0) {
+        // Period expired - deduct periods
+        const periodsToDeduct = Math.floor(Math.abs(state.byoYomiTime) / game.goTimeControl.byoYomiTime) + 1;
+        state.byoYomiPeriods = Math.max(0, state.byoYomiPeriods - periodsToDeduct);
         
-        if (state.byoYomiTime <= 0) {
-          state.byoYomiPeriods = Math.max(0, state.byoYomiPeriods - 1);
-          if (state.byoYomiPeriods <= 0) {
-            game.goTimeExpired = currentColor;
-          } else {
-            // Reset timer for next period
-            state.byoYomiTime = game.goTimeControl.byoYomiTime;
-          }
+        if (state.byoYomiPeriods <= 0) {
+          game.goTimeExpired = currentColor;
+        } else {
+          // Reset timer for next period
+          state.byoYomiTime = game.goTimeControl.byoYomiTime;
         }
       }
     }
+  }
+
+  // Update goLastMoveTime to reflect the time we've already accounted for
+  // This prevents double-counting on the next interval
+  if (updated && timeDeducted > 0) {
+    game.goLastMoveTime = new Date(now.getTime() - ((elapsedSeconds - timeDeducted) * 1000));
   }
 
   return updated;
@@ -1150,6 +1167,8 @@ const initGameSocket = (io) => {
   });
 
   // Periodic time update for active Go games
+  // Use shorter interval (500ms) but calculate based on real elapsed time
+  // This ensures smooth 1-second decrements even if intervals are delayed
   setInterval(async () => {
     try {
       const activeGoGames = await Game.find({
@@ -1200,7 +1219,7 @@ const initGameSocket = (io) => {
     } catch (err) {
       console.error('Error in time update interval:', err);
     }
-  }, 1000); // Update every second
+  }, 500); // Check every 500ms, but calculate based on real elapsed time
 };
 
 // Helper function to check for captures
