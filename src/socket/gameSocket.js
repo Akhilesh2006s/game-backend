@@ -184,6 +184,7 @@ function getCurrentTimeRemaining(game, color) {
 /**
  * Update time for current player (called periodically)
  * Uses real elapsed time based on Date.now() instead of trusting setInterval
+ * goLastMoveTime represents when the current turn started - we calculate elapsed from that
  */
 function updateCurrentPlayerTime(game) {
   if (!game.goTimeControl || game.goTimeControl.mode === 'none') {
@@ -196,64 +197,67 @@ function updateCurrentPlayerTime(game) {
 
   if (!game.goLastMoveTime) return false;
 
-  // Calculate real elapsed time since last move
+  // Calculate real elapsed time since turn started
   const now = new Date();
   const elapsedSeconds = Math.floor((now - game.goLastMoveTime) / 1000);
   
-  if (elapsedSeconds <= 0) return false; // No time has passed
+  // Only update if at least 1 second has elapsed
+  if (elapsedSeconds < 1) return false;
 
   let updated = false;
-  let timeDeducted = 0;
+  let newTime = 0;
 
   if (game.goTimeControl.mode === 'fischer') {
-    // Fischer: deduct real elapsed time
-    const previousTime = state.mainTime;
-    state.mainTime = Math.max(0, state.mainTime - elapsedSeconds);
-    timeDeducted = previousTime - state.mainTime;
-    updated = timeDeducted > 0;
-    
-    if (state.mainTime <= 0) {
-      game.goTimeExpired = currentColor;
+    // Fischer: deduct elapsed time
+    newTime = Math.max(0, state.mainTime - elapsedSeconds);
+    if (newTime !== state.mainTime) {
+      state.mainTime = newTime;
+      updated = true;
+      
+      if (state.mainTime <= 0) {
+        game.goTimeExpired = currentColor;
+      }
     }
   } else if (game.goTimeControl.mode === 'japanese') {
     if (!state.isByoYomi) {
-      // Main time: deduct real elapsed time
-      const previousTime = state.mainTime;
-      state.mainTime = Math.max(0, state.mainTime - elapsedSeconds);
-      timeDeducted = previousTime - state.mainTime;
-      updated = timeDeducted > 0;
-      
-      if (state.mainTime <= 0) {
-        state.isByoYomi = true;
-        state.byoYomiTime = game.goTimeControl.byoYomiTime;
-        state.byoYomiPeriods = game.goTimeControl.byoYomiPeriods;
+      // Main time: deduct elapsed time
+      newTime = Math.max(0, state.mainTime - elapsedSeconds);
+      if (newTime !== state.mainTime) {
+        state.mainTime = newTime;
+        updated = true;
+        
+        if (state.mainTime <= 0) {
+          state.isByoYomi = true;
+          state.byoYomiTime = game.goTimeControl.byoYomiTime;
+          state.byoYomiPeriods = game.goTimeControl.byoYomiPeriods;
+        }
       }
     } else {
-      // Byo Yomi: deduct real elapsed time from period
-      const previousTime = state.byoYomiTime;
-      state.byoYomiTime = Math.max(0, state.byoYomiTime - elapsedSeconds);
-      timeDeducted = previousTime - state.byoYomiTime;
-      updated = timeDeducted > 0;
-      
-      if (state.byoYomiTime <= 0) {
-        // Period expired - deduct periods
-        const periodsToDeduct = Math.floor(Math.abs(state.byoYomiTime) / game.goTimeControl.byoYomiTime) + 1;
-        state.byoYomiPeriods = Math.max(0, state.byoYomiPeriods - periodsToDeduct);
+      // Byo Yomi: deduct elapsed time from period
+      newTime = Math.max(0, state.byoYomiTime - elapsedSeconds);
+      if (newTime !== state.byoYomiTime) {
+        state.byoYomiTime = newTime;
+        updated = true;
         
-        if (state.byoYomiPeriods <= 0) {
-          game.goTimeExpired = currentColor;
-        } else {
-          // Reset timer for next period
-          state.byoYomiTime = game.goTimeControl.byoYomiTime;
+        if (state.byoYomiTime <= 0) {
+          // Period expired - deduct one period
+          state.byoYomiPeriods = Math.max(0, state.byoYomiPeriods - 1);
+          
+          if (state.byoYomiPeriods <= 0) {
+            game.goTimeExpired = currentColor;
+          } else {
+            // Reset timer for next period
+            state.byoYomiTime = game.goTimeControl.byoYomiTime;
+          }
         }
       }
     }
   }
 
-  // Update goLastMoveTime to reflect the time we've already accounted for
-  // This prevents double-counting on the next interval
-  if (updated && timeDeducted > 0) {
-    game.goLastMoveTime = new Date(now.getTime() - ((elapsedSeconds - timeDeducted) * 1000));
+  // Update goLastMoveTime to current time after deducting elapsed time
+  // This ensures next interval calculates from the correct point
+  if (updated) {
+    game.goLastMoveTime = now;
   }
 
   return updated;
