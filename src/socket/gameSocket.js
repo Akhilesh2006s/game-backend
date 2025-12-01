@@ -188,6 +188,7 @@ function getCurrentTimeRemaining(game, color) {
 
 /**
  * Update time for current player (called periodically)
+ * Decrements by exactly 1 second each interval
  */
 function updateCurrentPlayerTime(game) {
   if (!game.goTimeControl || game.goTimeControl.mode === 'none') {
@@ -198,13 +199,13 @@ function updateCurrentPlayerTime(game) {
   const state = game.goTimeState[currentColor];
   if (!state) return false;
 
-  const elapsed = getElapsedTime(game);
+  // Decrement by exactly 1 second (not elapsed time)
   let updated = false;
 
   if (game.goTimeControl.mode === 'fischer') {
-    const newTime = Math.max(0, state.mainTime - elapsed);
-    if (newTime !== state.mainTime) {
-      state.mainTime = newTime;
+    // Fischer: decrement mainTime by 1 second
+    if (state.mainTime > 0) {
+      state.mainTime = Math.max(0, state.mainTime - 1);
       updated = true;
       
       if (state.mainTime <= 0) {
@@ -213,9 +214,9 @@ function updateCurrentPlayerTime(game) {
     }
   } else if (game.goTimeControl.mode === 'japanese') {
     if (!state.isByoYomi) {
-      const newTime = Math.max(0, state.mainTime - elapsed);
-      if (newTime !== state.mainTime) {
-        state.mainTime = newTime;
+      // Main time: decrement by 1 second
+      if (state.mainTime > 0) {
+        state.mainTime = Math.max(0, state.mainTime - 1);
         updated = true;
         
         if (state.mainTime <= 0) {
@@ -225,9 +226,9 @@ function updateCurrentPlayerTime(game) {
         }
       }
     } else {
-      const newTime = Math.max(0, state.byoYomiTime - elapsed);
-      if (newTime !== state.byoYomiTime) {
-        state.byoYomiTime = newTime;
+      // Byo Yomi: decrement byoYomiTime by 1 second
+      if (state.byoYomiTime > 0) {
+        state.byoYomiTime = Math.max(0, state.byoYomiTime - 1);
         updated = true;
         
         if (state.byoYomiTime <= 0) {
@@ -235,6 +236,7 @@ function updateCurrentPlayerTime(game) {
           if (state.byoYomiPeriods <= 0) {
             game.goTimeExpired = currentColor;
           } else {
+            // Reset timer for next period
             state.byoYomiTime = game.goTimeControl.byoYomiTime;
           }
         }
