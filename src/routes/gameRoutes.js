@@ -273,11 +273,15 @@ router.get('/search', authGuard, async (req, res) => {
       .select('host guest')
       .lean();
     
-    // Collect all active user IDs
+    // Collect all active user IDs (excluding current user)
     const activeUserIds = new Set();
     activeGames.forEach(game => {
-      if (game.host) activeUserIds.add(game.host.toString());
-      if (game.guest) activeUserIds.add(game.guest.toString());
+      if (game.host && game.host.toString() !== req.user.id.toString()) {
+        activeUserIds.add(game.host.toString());
+      }
+      if (game.guest && game.guest.toString() !== req.user.id.toString()) {
+        activeUserIds.add(game.guest.toString());
+      }
     });
     
     // If no active users, return empty players list
@@ -285,12 +289,13 @@ router.get('/search', authGuard, async (req, res) => {
       return res.json({ players: [], games: gamesWithEnrollment });
     }
     
-    // Get active users first
+    // Convert to ObjectId array for query
+    const mongoose = require('mongoose');
+    const activeUserObjectIds = Array.from(activeUserIds).map(id => mongoose.Types.ObjectId(id));
+    
+    // Get active users
     const activeUsers = await User.find({
-      _id: { 
-        $in: Array.from(activeUserIds).map(id => require('mongoose').Types.ObjectId(id)),
-        $ne: req.user.id 
-      },
+      _id: { $in: activeUserObjectIds },
       role: { $ne: 'admin' }
     })
       .select('username studentName email avatarColor')
@@ -298,25 +303,28 @@ router.get('/search', authGuard, async (req, res) => {
     
     // Get student data for active users
     const activeUserEmails = activeUsers.map(u => u.email.toLowerCase());
-    const studentQuery = hasQuery && (type === 'all' || type === 'enrollment' || type === 'name' || !type) ? {
-      email: { $in: activeUserEmails },
-      $or: [
+    
+    // Build student query - filter by search if provided
+    let studentQuery = {
+      email: { $in: activeUserEmails }
+    };
+    
+    if (hasQuery && (type === 'all' || type === 'enrollment' || type === 'name' || !type)) {
+      studentQuery.$or = [
         { enrollmentNo: { $regex: searchLower, $options: 'i' } },
         { firstName: { $regex: searchLower, $options: 'i' } },
         { lastName: { $regex: searchLower, $options: 'i' } },
         { email: { $regex: searchLower, $options: 'i' } },
-      ]
-    } : {
-      email: { $in: activeUserEmails }
-    };
+      ];
+    }
     
-    const matchingStudents = await Student.find(studentQuery).limit(hasQuery ? 50 : 100).lean();
-    const studentEmails = matchingStudents.map(s => s.email.toLowerCase());
+    const matchingStudents = await Student.find(studentQuery).lean();
+    const studentEmails = new Set(matchingStudents.map(s => s.email.toLowerCase()));
     
-    // Filter active users to only those matching student data and search criteria
-    const matchingUsers = activeUsers.filter(user => 
-      studentEmails.includes(user.email.toLowerCase())
-    ).slice(0, 50);
+    // Filter active users to only those with matching student data
+    const matchingUsers = activeUsers
+      .filter(user => studentEmails.has(user.email.toLowerCase()))
+      .slice(0, 50);
 
     // Enrich users with enrollment numbers
     const studentMap = new Map();
