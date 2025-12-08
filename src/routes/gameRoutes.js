@@ -226,21 +226,23 @@ router.get('/search', authGuard, async (req, res) => {
   try {
     const { query: searchQuery, type } = req.query; // type: 'code', 'enrollment', 'name', or 'all'
     
-    if (!searchQuery || searchQuery.trim().length === 0) {
-      return res.json({ players: [], games: [] });
-    }
+    const hasQuery = searchQuery && searchQuery.trim().length > 0;
+    const searchLower = hasQuery ? searchQuery.trim().toLowerCase() : '';
 
-    const searchLower = searchQuery.trim().toLowerCase();
-
-    // Search for games by code
-    const gamesByCode = await Game.find({
-      code: { $regex: searchLower, $options: 'i' },
+    // Get all available games (waiting for players) or search by code
+    let gamesQuery = {
       status: { $in: ['WAITING', 'READY'] }, // Only show games waiting for players
-    })
+    };
+    
+    if (hasQuery && (type === 'all' || type === 'code' || !type)) {
+      gamesQuery.code = { $regex: searchLower, $options: 'i' };
+    }
+    
+    const gamesByCode = await Game.find(gamesQuery)
       .populate('host', 'username studentName avatarColor email')
       .populate('guest', 'username studentName avatarColor email')
       .select('code host guest status activeStage createdAt')
-      .limit(20)
+      .limit(hasQuery ? 20 : 50) // Show more when no query
       .lean();
 
     // Search for users/players by name, username, or enrollment
@@ -264,15 +266,20 @@ router.get('/search', authGuard, async (req, res) => {
       return res.json({ players: [], games: gamesWithEnrollment });
     }
 
-    // Get all students matching the search
-    const matchingStudents = await Student.find({
-      $or: [
-        { enrollmentNo: { $regex: searchLower, $options: 'i' } },
-        { firstName: { $regex: searchLower, $options: 'i' } },
-        { lastName: { $regex: searchLower, $options: 'i' } },
-        { email: { $regex: searchLower, $options: 'i' } },
-      ]
-    }).limit(50).lean();
+    // Get all students (or matching the search)
+    let studentQuery = {};
+    if (hasQuery && (type === 'all' || type === 'enrollment' || type === 'name' || !type)) {
+      studentQuery = {
+        $or: [
+          { enrollmentNo: { $regex: searchLower, $options: 'i' } },
+          { firstName: { $regex: searchLower, $options: 'i' } },
+          { lastName: { $regex: searchLower, $options: 'i' } },
+          { email: { $regex: searchLower, $options: 'i' } },
+        ]
+      };
+    }
+    
+    const matchingStudents = await Student.find(studentQuery).limit(hasQuery ? 50 : 100).lean();
 
     const studentEmails = matchingStudents.map(s => s.email.toLowerCase());
     
