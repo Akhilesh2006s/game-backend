@@ -156,6 +156,146 @@ router.get('/code/:code', authGuard, async (req, res) => {
   }
 });
 
+// Search for players and games - MUST be before router.get('/') to avoid route conflicts
+router.get('/search', authGuard, async (req, res) => {
+  try {
+    const { query: searchQuery, type } = req.query; // type: 'code', 'enrollment', 'name', or 'all'
+    
+    const hasQuery = searchQuery && searchQuery.trim().length > 0;
+    const searchLower = hasQuery ? searchQuery.trim().toLowerCase() : '';
+
+    // Get all available games (waiting for players) or search by code
+    let gamesQuery = {
+      status: { $in: ['WAITING', 'READY'] }, // Only show games waiting for players
+    };
+    
+    if (hasQuery && (type === 'all' || type === 'code' || !type)) {
+      gamesQuery.code = { $regex: searchLower, $options: 'i' };
+    }
+    
+    const gamesByCode = await Game.find(gamesQuery)
+      .populate('host', 'username studentName avatarColor email')
+      .populate('guest', 'username studentName avatarColor email')
+      .select('code host guest status activeStage createdAt')
+      .limit(hasQuery ? 20 : 50) // Show more when no query
+      .lean();
+
+    // Add enrollment numbers to games (do this early so we can return it if needed)
+    const gamesWithEnrollment = await Promise.all(
+      gamesByCode.map(async (game) => {
+        if (game.host?.email) {
+          const hostStudent = await Student.findOne({ email: game.host.email.toLowerCase() });
+          if (hostStudent) game.host.enrollmentNo = hostStudent.enrollmentNo;
+        }
+        if (game.guest?.email) {
+          const guestStudent = await Student.findOne({ email: game.guest.email.toLowerCase() });
+          if (guestStudent) game.guest.enrollmentNo = guestStudent.enrollmentNo;
+        }
+        return game;
+      })
+    );
+
+    // If searching only by code, return early
+    if (type === 'code') {
+      return res.json({ players: [], games: gamesWithEnrollment });
+    }
+
+    // Get active users - only those who are currently in games (WAITING, READY, or IN_PROGRESS)
+    const activeGames = await Game.find({
+      status: { $in: ['WAITING', 'READY', 'IN_PROGRESS'] }
+    })
+      .select('host guest')
+      .lean();
+    
+    // Collect all active user IDs (excluding current user)
+    const activeUserIds = new Set();
+    activeGames.forEach(game => {
+      if (game.host && game.host.toString() !== req.user.id.toString()) {
+        activeUserIds.add(game.host.toString());
+      }
+      if (game.guest && game.guest.toString() !== req.user.id.toString()) {
+        activeUserIds.add(game.guest.toString());
+      }
+    });
+    
+    // If no active users, return empty players list
+    if (activeUserIds.size === 0) {
+      return res.json({ players: [], games: gamesWithEnrollment });
+    }
+    
+    // Convert to ObjectId array for query
+    const activeUserObjectIds = Array.from(activeUserIds).map(id => {
+      try {
+        return new mongoose.Types.ObjectId(id);
+      } catch (err) {
+        return null;
+      }
+    }).filter(Boolean);
+    
+    if (activeUserObjectIds.length === 0) {
+      return res.json({ players: [], games: gamesWithEnrollment });
+    }
+    
+    // Get active users
+    const activeUsers = await User.find({
+      _id: { $in: activeUserObjectIds },
+      role: { $ne: 'admin' }
+    })
+      .select('username studentName email avatarColor')
+      .lean();
+    
+    // Get student data for active users
+    const activeUserEmails = activeUsers.map(u => u.email.toLowerCase());
+    
+    // If no active users with emails, return empty
+    if (activeUserEmails.length === 0) {
+      return res.json({ players: [], games: gamesWithEnrollment });
+    }
+    
+    // Build student query - filter by search if provided
+    let studentQuery = {
+      email: { $in: activeUserEmails }
+    };
+    
+    if (hasQuery && (type === 'all' || type === 'enrollment' || type === 'name' || !type)) {
+      studentQuery.$or = [
+        { enrollmentNo: { $regex: searchLower, $options: 'i' } },
+        { firstName: { $regex: searchLower, $options: 'i' } },
+        { lastName: { $regex: searchLower, $options: 'i' } },
+        { email: { $regex: searchLower, $options: 'i' } },
+      ];
+    }
+    
+    const matchingStudents = await Student.find(studentQuery).lean();
+    const studentEmails = new Set(matchingStudents.map(s => s.email.toLowerCase()));
+    
+    // Filter active users to only those with matching student data
+    const matchingUsers = activeUsers
+      .filter(user => studentEmails.has(user.email.toLowerCase()))
+      .slice(0, 50);
+
+    // Enrich users with enrollment numbers
+    const studentMap = new Map();
+    matchingStudents.forEach(s => {
+      studentMap.set(s.email.toLowerCase(), s);
+    });
+
+    const players = matchingUsers.map(user => {
+      const student = studentMap.get(user.email.toLowerCase());
+      return {
+        ...user,
+        enrollmentNo: student?.enrollmentNo || null,
+        fullName: student ? `${student.firstName} ${student.lastName || ''}`.trim() : null,
+      };
+    });
+
+    res.json({ players, games: gamesWithEnrollment });
+  } catch (err) {
+    console.error('Error searching players/games:', err);
+    res.status(500).json({ message: 'Failed to search', error: err.message });
+  }
+});
+
 router.get('/', authGuard, async (req, res) => {
   try {
     const { status, limit = 50, skip = 0 } = req.query;
@@ -222,152 +362,6 @@ router.get('/', authGuard, async (req, res) => {
   }
 });
 
-// Search for players and games
-router.get('/search', authGuard, async (req, res) => {
-  try {
-    const { query: searchQuery, type } = req.query; // type: 'code', 'enrollment', 'name', or 'all'
-    
-    const hasQuery = searchQuery && searchQuery.trim().length > 0;
-    const searchLower = hasQuery ? searchQuery.trim().toLowerCase() : '';
-
-    // Get all available games (waiting for players) or search by code
-    let gamesQuery = {
-      status: { $in: ['WAITING', 'READY'] }, // Only show games waiting for players
-    };
-    
-    if (hasQuery && (type === 'all' || type === 'code' || !type)) {
-      gamesQuery.code = { $regex: searchLower, $options: 'i' };
-    }
-    
-    const gamesByCode = await Game.find(gamesQuery)
-      .populate('host', 'username studentName avatarColor email')
-      .populate('guest', 'username studentName avatarColor email')
-      .select('code host guest status activeStage createdAt')
-      .limit(hasQuery ? 20 : 50) // Show more when no query
-      .lean();
-
-    // Search for users/players by name, username, or enrollment
-    let userQuery = {};
-    
-    if (type === 'code') {
-      // Only search games by code
-      const gamesWithEnrollment = await Promise.all(
-        gamesByCode.map(async (game) => {
-          if (game.host?.email) {
-            const hostStudent = await Student.findOne({ email: game.host.email.toLowerCase() });
-            if (hostStudent) game.host.enrollmentNo = hostStudent.enrollmentNo;
-          }
-          if (game.guest?.email) {
-            const guestStudent = await Student.findOne({ email: game.guest.email.toLowerCase() });
-            if (guestStudent) game.guest.enrollmentNo = guestStudent.enrollmentNo;
-          }
-          return game;
-        })
-      );
-      return res.json({ players: [], games: gamesWithEnrollment });
-    }
-
-    // Get active users - only those who are currently in games (WAITING, READY, or IN_PROGRESS)
-    const activeGames = await Game.find({
-      status: { $in: ['WAITING', 'READY', 'IN_PROGRESS'] }
-    })
-      .select('host guest')
-      .lean();
-    
-    // Collect all active user IDs (excluding current user)
-    const activeUserIds = new Set();
-    activeGames.forEach(game => {
-      if (game.host && game.host.toString() !== req.user.id.toString()) {
-        activeUserIds.add(game.host.toString());
-      }
-      if (game.guest && game.guest.toString() !== req.user.id.toString()) {
-        activeUserIds.add(game.guest.toString());
-      }
-    });
-    
-    // Add enrollment numbers to games (do this early so we can return it if needed)
-    const gamesWithEnrollment = await Promise.all(
-      gamesByCode.map(async (game) => {
-        if (game.host?.email) {
-          const hostStudent = await Student.findOne({ email: game.host.email.toLowerCase() });
-          if (hostStudent) game.host.enrollmentNo = hostStudent.enrollmentNo;
-        }
-        if (game.guest?.email) {
-          const guestStudent = await Student.findOne({ email: game.guest.email.toLowerCase() });
-          if (guestStudent) game.guest.enrollmentNo = guestStudent.enrollmentNo;
-        }
-        return game;
-      })
-    );
-
-    // If no active users, return empty players list
-    if (activeUserIds.size === 0) {
-      return res.json({ players: [], games: gamesWithEnrollment });
-    }
-    
-    // Convert to ObjectId array for query
-    const activeUserObjectIds = Array.from(activeUserIds).map(id => mongoose.Types.ObjectId(id));
-    
-    // Get active users
-    const activeUsers = await User.find({
-      _id: { $in: activeUserObjectIds },
-      role: { $ne: 'admin' }
-    })
-      .select('username studentName email avatarColor')
-      .lean();
-    
-    // Get student data for active users
-    const activeUserEmails = activeUsers.map(u => u.email.toLowerCase());
-    
-    // If no active users with emails, return empty
-    if (activeUserEmails.length === 0) {
-      return res.json({ players: [], games: gamesWithEnrollment });
-    }
-    
-    // Build student query - filter by search if provided
-    let studentQuery = {
-      email: { $in: activeUserEmails }
-    };
-    
-    if (hasQuery && (type === 'all' || type === 'enrollment' || type === 'name' || !type)) {
-      studentQuery.$or = [
-        { enrollmentNo: { $regex: searchLower, $options: 'i' } },
-        { firstName: { $regex: searchLower, $options: 'i' } },
-        { lastName: { $regex: searchLower, $options: 'i' } },
-        { email: { $regex: searchLower, $options: 'i' } },
-      ];
-    }
-    
-    const matchingStudents = await Student.find(studentQuery).lean();
-    const studentEmails = new Set(matchingStudents.map(s => s.email.toLowerCase()));
-    
-    // Filter active users to only those with matching student data
-    const matchingUsers = activeUsers
-      .filter(user => studentEmails.has(user.email.toLowerCase()))
-      .slice(0, 50);
-
-    // Enrich users with enrollment numbers
-    const studentMap = new Map();
-    matchingStudents.forEach(s => {
-      studentMap.set(s.email.toLowerCase(), s);
-    });
-
-    const players = matchingUsers.map(user => {
-      const student = studentMap.get(user.email.toLowerCase());
-      return {
-        ...user,
-        enrollmentNo: student?.enrollmentNo || null,
-        fullName: student ? `${student.firstName} ${student.lastName || ''}`.trim() : null,
-      };
-    });
-
-    res.json({ players, games: gamesWithEnrollment });
-  } catch (err) {
-    console.error('Error searching players/games:', err);
-    res.status(500).json({ message: 'Failed to search' });
-  }
-});
-
 router.post('/start-pennies', authGuard, async (req, res) => {
   try {
     // Block admin users from starting games
@@ -376,7 +370,7 @@ router.post('/start-pennies', authGuard, async (req, res) => {
       return res.status(403).json({ message: 'Admin users cannot start games' });
     }
 
-    const { code, timePerMove } = req.body;
+    const { code } = req.body;
     const game = await Game.findOne({ code });
     if (!game) {
       return res.status(404).json({ message: 'Game not found' });
@@ -390,11 +384,8 @@ router.post('/start-pennies', authGuard, async (req, res) => {
 
     game.activeStage = 'MATCHING_PENNIES';
     game.status = 'READY';
-    // Set time per move if provided (must be 0, 5, or 10)
-    if (timePerMove !== undefined && [0, 5, 10].includes(Number(timePerMove))) {
-      game.penniesTimePerMove = Number(timePerMove);
-    }
-    game.penniesLastMoveTime = new Date(); // Start timer for first move
+    // Set time per move (default to 15 seconds if not provided)
+    game.penniesTimePerMove = req.body.timePerMove || 15;
     await game.save();
     await game.populate([
       { path: 'host', select: 'username studentName avatarColor' },
@@ -544,7 +535,7 @@ router.post('/start-rps', authGuard, async (req, res) => {
       return res.status(403).json({ message: 'Admin users cannot start games' });
     }
 
-    const { code, timePerMove } = req.body;
+    const { code } = req.body;
     const game = await Game.findOne({ code });
     if (!game) {
       return res.status(404).json({ message: 'Game not found' });
@@ -558,11 +549,8 @@ router.post('/start-rps', authGuard, async (req, res) => {
 
     game.activeStage = 'ROCK_PAPER_SCISSORS';
     game.status = 'READY';
-    // Set time per move if provided (must be 0, 5, or 10)
-    if (timePerMove !== undefined && [0, 5, 10].includes(Number(timePerMove))) {
-      game.rpsTimePerMove = Number(timePerMove);
-    }
-    game.rpsLastMoveTime = new Date(); // Start timer for first move
+    // Set time per move (default to 15 seconds if not provided)
+    game.rpsTimePerMove = req.body.timePerMove || 15;
     await game.save();
     await game.populate([
       { path: 'host', select: 'username studentName avatarColor' },

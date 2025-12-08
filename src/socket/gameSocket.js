@@ -1197,6 +1197,187 @@ const initGameSocket = (io) => {
         ...scoreSummary,
       });
     });
+
+    // Rematch request handler
+    socket.on('rematch:request', async ({ code }) => {
+      const upper = code?.toUpperCase();
+      if (!upper) {
+        socket.emit('game:error', 'Invalid code');
+        return;
+      }
+
+      const rooms = Array.from(socket.rooms);
+      if (!rooms.includes(upper)) {
+        socket.emit('game:error', 'Please join the game first');
+        return;
+      }
+
+      const game = await Game.findOne({ code: upper })
+        .populate('host', 'username studentName')
+        .populate('guest', 'username studentName');
+      
+      if (!game) {
+        socket.emit('game:error', 'Game not found');
+        return;
+      }
+
+      const userId = String(socket.user.id);
+      const hostId = String(game.host?._id || game.host?.id || game.host);
+      const guestId = String(game.guest?._id || game.guest?.id || game.guest);
+      
+      if (userId !== hostId && userId !== guestId) {
+        socket.emit('game:error', 'You are not part of this game');
+        return;
+      }
+
+      if (!game.guest) {
+        socket.emit('game:error', 'Opponent has not joined yet');
+        return;
+      }
+
+      // Determine opponent
+      const opponentId = userId === hostId ? guestId : hostId;
+      const opponentName = userId === hostId 
+        ? (game.guest?.studentName || game.guest?.username || 'Opponent')
+        : (game.host?.studentName || game.host?.username || 'Opponent');
+      const requesterName = userId === hostId
+        ? (game.host?.studentName || game.host?.username || 'You')
+        : (game.guest?.studentName || game.guest?.username || 'You');
+
+      // Send rematch request to opponent
+      io.to(upper).emit('rematch:requested', {
+        code: upper,
+        requesterId: userId,
+        requesterName,
+        gameType: game.activeStage,
+        gameSettings: {
+          goBoardSize: game.goBoardSize,
+          goTimeControl: game.goTimeControl,
+          rpsTimePerMove: game.rpsTimePerMove,
+          penniesTimePerMove: game.penniesTimePerMove,
+        },
+      });
+    });
+
+    // Rematch accept handler
+    socket.on('rematch:accept', async ({ code, requesterId }) => {
+      const upper = code?.toUpperCase();
+      if (!upper) {
+        socket.emit('game:error', 'Invalid code');
+        return;
+      }
+
+      const rooms = Array.from(socket.rooms);
+      if (!rooms.includes(upper)) {
+        socket.emit('game:error', 'Please join the game first');
+        return;
+      }
+
+      const game = await Game.findOne({ code: upper })
+        .populate('host', 'username studentName')
+        .populate('guest', 'username studentName');
+      
+      if (!game) {
+        socket.emit('game:error', 'Game not found');
+        return;
+      }
+
+      const userId = String(socket.user.id);
+      const hostId = String(game.host?._id || game.host?.id || game.host);
+      const guestId = String(game.guest?._id || game.guest?.id || game.guest);
+      
+      if (userId !== hostId && userId !== guestId) {
+        socket.emit('game:error', 'You are not part of this game');
+        return;
+      }
+
+      if (String(requesterId) !== hostId && String(requesterId) !== guestId) {
+        socket.emit('game:error', 'Invalid requester');
+        return;
+      }
+
+      if (String(requesterId) === userId) {
+        socket.emit('game:error', 'Cannot accept your own rematch request');
+        return;
+      }
+
+      // Create new game with same players and settings
+      const GameModel = require('../models/Game');
+      const generateMatchCode = require('../utils/generateMatchCode');
+      
+      let newCode;
+      let exists = true;
+      while (exists) {
+        newCode = await generateMatchCode();
+        exists = await GameModel.exists({ code: newCode });
+      }
+
+      const newGame = new GameModel({
+        code: newCode,
+        host: game.host._id,
+        guest: game.guest._id,
+        status: 'READY',
+        activeStage: game.activeStage,
+        goBoardSize: game.goBoardSize,
+        goTimeControl: game.goTimeControl,
+        rpsTimePerMove: game.rpsTimePerMove,
+        penniesTimePerMove: game.penniesTimePerMove,
+      });
+
+      await newGame.save();
+      await newGame.populate('host', 'username studentName avatarColor email');
+      await newGame.populate('guest', 'username studentName avatarColor email');
+
+      // Notify both players
+      io.to(upper).emit('rematch:accepted', {
+        oldCode: upper,
+        newCode: newGame.code,
+        game: newGame,
+      });
+    });
+
+    // Rematch reject handler
+    socket.on('rematch:reject', async ({ code }) => {
+      const upper = code?.toUpperCase();
+      if (!upper) {
+        socket.emit('game:error', 'Invalid code');
+        return;
+      }
+
+      const rooms = Array.from(socket.rooms);
+      if (!rooms.includes(upper)) {
+        socket.emit('game:error', 'Please join the game first');
+        return;
+      }
+
+      const game = await Game.findOne({ code: upper })
+        .populate('host', 'username studentName')
+        .populate('guest', 'username studentName');
+      
+      if (!game) {
+        socket.emit('game:error', 'Game not found');
+        return;
+      }
+
+      const userId = String(socket.user.id);
+      const hostId = String(game.host?._id || game.host?.id || game.host);
+      const guestId = String(game.guest?._id || game.guest?.id || game.guest);
+      
+      if (userId !== hostId && userId !== guestId) {
+        socket.emit('game:error', 'You are not part of this game');
+        return;
+      }
+
+      const rejectorName = userId === hostId
+        ? (game.host?.studentName || game.host?.username || 'Opponent')
+        : (game.guest?.studentName || game.guest?.username || 'Opponent');
+
+      // Notify requester
+      io.to(upper).emit('rematch:rejected', {
+        code: upper,
+        rejectorName,
+      });
+    });
   });
 
   // Periodic time update for active Go games
