@@ -1,4 +1,5 @@
 const express = require('express');
+const mongoose = require('mongoose');
 const Game = require('../models/Game');
 const User = require('../models/User');
 const Student = require('../models/Student');
@@ -284,13 +285,27 @@ router.get('/search', authGuard, async (req, res) => {
       }
     });
     
+    // Add enrollment numbers to games (do this early so we can return it if needed)
+    const gamesWithEnrollment = await Promise.all(
+      gamesByCode.map(async (game) => {
+        if (game.host?.email) {
+          const hostStudent = await Student.findOne({ email: game.host.email.toLowerCase() });
+          if (hostStudent) game.host.enrollmentNo = hostStudent.enrollmentNo;
+        }
+        if (game.guest?.email) {
+          const guestStudent = await Student.findOne({ email: game.guest.email.toLowerCase() });
+          if (guestStudent) game.guest.enrollmentNo = guestStudent.enrollmentNo;
+        }
+        return game;
+      })
+    );
+
     // If no active users, return empty players list
     if (activeUserIds.size === 0) {
       return res.json({ players: [], games: gamesWithEnrollment });
     }
     
     // Convert to ObjectId array for query
-    const mongoose = require('mongoose');
     const activeUserObjectIds = Array.from(activeUserIds).map(id => mongoose.Types.ObjectId(id));
     
     // Get active users
@@ -303,6 +318,11 @@ router.get('/search', authGuard, async (req, res) => {
     
     // Get student data for active users
     const activeUserEmails = activeUsers.map(u => u.email.toLowerCase());
+    
+    // If no active users with emails, return empty
+    if (activeUserEmails.length === 0) {
+      return res.json({ players: [], games: gamesWithEnrollment });
+    }
     
     // Build student query - filter by search if provided
     let studentQuery = {
@@ -340,21 +360,6 @@ router.get('/search', authGuard, async (req, res) => {
         fullName: student ? `${student.firstName} ${student.lastName || ''}`.trim() : null,
       };
     });
-
-    // Add enrollment numbers to games
-    const gamesWithEnrollment = await Promise.all(
-      gamesByCode.map(async (game) => {
-        if (game.host?.email) {
-          const hostStudent = await Student.findOne({ email: game.host.email.toLowerCase() });
-          if (hostStudent) game.host.enrollmentNo = hostStudent.enrollmentNo;
-        }
-        if (game.guest?.email) {
-          const guestStudent = await Student.findOne({ email: game.guest.email.toLowerCase() });
-          if (guestStudent) game.guest.enrollmentNo = guestStudent.enrollmentNo;
-        }
-        return game;
-      })
-    );
 
     res.json({ players, games: gamesWithEnrollment });
   } catch (err) {
