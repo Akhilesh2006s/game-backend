@@ -266,32 +266,57 @@ router.get('/search', authGuard, async (req, res) => {
       return res.json({ players: [], games: gamesWithEnrollment });
     }
 
-    // Get all students (or matching the search)
-    let studentQuery = {};
-    if (hasQuery && (type === 'all' || type === 'enrollment' || type === 'name' || !type)) {
-      studentQuery = {
-        $or: [
-          { enrollmentNo: { $regex: searchLower, $options: 'i' } },
-          { firstName: { $regex: searchLower, $options: 'i' } },
-          { lastName: { $regex: searchLower, $options: 'i' } },
-          { email: { $regex: searchLower, $options: 'i' } },
-        ]
-      };
+    // Get active users - only those who are currently in games (WAITING, READY, or IN_PROGRESS)
+    const activeGames = await Game.find({
+      status: { $in: ['WAITING', 'READY', 'IN_PROGRESS'] }
+    })
+      .select('host guest')
+      .lean();
+    
+    // Collect all active user IDs
+    const activeUserIds = new Set();
+    activeGames.forEach(game => {
+      if (game.host) activeUserIds.add(game.host.toString());
+      if (game.guest) activeUserIds.add(game.guest.toString());
+    });
+    
+    // If no active users, return empty players list
+    if (activeUserIds.size === 0) {
+      return res.json({ players: [], games: gamesWithEnrollment });
     }
     
-    const matchingStudents = await Student.find(studentQuery).limit(hasQuery ? 50 : 100).lean();
-
-    const studentEmails = matchingStudents.map(s => s.email.toLowerCase());
-    
-    // Get users matching those students
-    const matchingUsers = await User.find({
-      email: { $in: studentEmails },
-      role: { $ne: 'admin' },
-      _id: { $ne: req.user.id } // Exclude current user
+    // Get active users first
+    const activeUsers = await User.find({
+      _id: { 
+        $in: Array.from(activeUserIds).map(id => require('mongoose').Types.ObjectId(id)),
+        $ne: req.user.id 
+      },
+      role: { $ne: 'admin' }
     })
       .select('username studentName email avatarColor')
-      .limit(50)
       .lean();
+    
+    // Get student data for active users
+    const activeUserEmails = activeUsers.map(u => u.email.toLowerCase());
+    const studentQuery = hasQuery && (type === 'all' || type === 'enrollment' || type === 'name' || !type) ? {
+      email: { $in: activeUserEmails },
+      $or: [
+        { enrollmentNo: { $regex: searchLower, $options: 'i' } },
+        { firstName: { $regex: searchLower, $options: 'i' } },
+        { lastName: { $regex: searchLower, $options: 'i' } },
+        { email: { $regex: searchLower, $options: 'i' } },
+      ]
+    } : {
+      email: { $in: activeUserEmails }
+    };
+    
+    const matchingStudents = await Student.find(studentQuery).limit(hasQuery ? 50 : 100).lean();
+    const studentEmails = matchingStudents.map(s => s.email.toLowerCase());
+    
+    // Filter active users to only those matching student data and search criteria
+    const matchingUsers = activeUsers.filter(user => 
+      studentEmails.includes(user.email.toLowerCase())
+    ).slice(0, 50);
 
     // Enrich users with enrollment numbers
     const studentMap = new Map();
