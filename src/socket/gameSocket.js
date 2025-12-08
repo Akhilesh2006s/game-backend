@@ -3,6 +3,8 @@ const Game = require('../models/Game');
 const User = require('../models/User');
 
 const activeMatches = new Map();
+// Track timeout timers for RPS and Matching Pennies
+const timeoutTimers = new Map(); // key: code, value: { hostTimer, guestTimer }
 const BOARD_DEFAULT_SIZE = 9;
 const MAX_POSITION_HISTORY = 2048;
 const DEFAULT_SCORING_METHOD = 'chinese';
@@ -450,6 +452,18 @@ const initGameSocket = (io) => {
         return;
       }
 
+      // Clear timeout timer for this player
+      const timeoutData = timeoutTimers.get(upper);
+      if (timeoutData) {
+        if (userId === hostId && timeoutData.hostTimer) {
+          clearTimeout(timeoutData.hostTimer);
+          timeoutData.hostTimer = null;
+        } else if (userId === guestId && timeoutData.guestTimer) {
+          clearTimeout(timeoutData.guestTimer);
+          timeoutData.guestTimer = null;
+        }
+      }
+
       let state = activeMatches.get(upper);
       if (!state) {
         state = { moves: {} };
@@ -525,8 +539,96 @@ const initGameSocket = (io) => {
       console.log(`[${upper}] Emitting roundResult:`, resultPayload);
       io.to(upper).emit('roundResult', resultPayload);
 
+      // Clear timeout timers
+      timeoutTimers.delete(upper);
       activeMatches.delete(upper);
+
+      // If game continues, set up timeout timers for next round
+      if (!isGameComplete && game.rpsTimePerMove && game.rpsTimePerMove > 0) {
+        const timePerMove = game.rpsTimePerMove * 1000; // Convert to milliseconds
+        const timeoutData = {
+          hostTimer: setTimeout(() => handleRPSTimeout(upper, hostId, guestId), timePerMove),
+          guestTimer: setTimeout(() => handleRPSTimeout(upper, guestId, hostId), timePerMove),
+        };
+        timeoutTimers.set(upper, timeoutData);
+        // Initialize state for next round
+        activeMatches.set(upper, { moves: {} });
+      }
     });
+
+    // Handle timeout for RPS - player loses if they don't submit in time
+    const handleRPSTimeout = async (code, timedOutPlayerId, opponentId) => {
+      const upper = code.toUpperCase();
+      const game = await Game.findOne({ code: upper });
+      if (!game || !game.guest) return;
+
+      const state = activeMatches.get(upper);
+      if (!state) return;
+
+      // If player already submitted, ignore timeout
+      if (state.moves[timedOutPlayerId]) return;
+
+      const hostId = String(game.host);
+      const guestId = String(game.guest);
+      
+      // Determine which player timed out and award round to opponent
+      let winner = null;
+      let hostMove = state.moves[hostId];
+      let guestMove = state.moves[guestId];
+      
+      if (timedOutPlayerId === hostId) {
+        // Host timed out - guest wins
+        winner = 'guest';
+        hostMove = null; // Host didn't submit
+        game.guestScore += 1;
+      } else if (timedOutPlayerId === guestId) {
+        // Guest timed out - host wins
+        winner = 'host';
+        guestMove = null; // Guest didn't submit
+        game.hostScore += 1;
+      }
+
+      game.rounds.push({
+        gameType: 'ROCK_PAPER_SCISSORS',
+        moves: [
+          { player: game.host, choice: hostMove || 'timeout' },
+          { player: game.guest, choice: guestMove || 'timeout' },
+        ],
+        winner: winner === 'host' ? game.host : game.guest,
+        summary: `${winner === 'host' ? 'Host' : 'Guest'} wins - opponent ran out of time.`,
+      });
+
+      const isGameComplete = game.hostScore >= 10 || game.guestScore >= 10;
+      if (isGameComplete) {
+        game.status = 'COMPLETE';
+        game.completedAt = new Date();
+        game.activeStage = 'ROCK_PAPER_SCISSORS';
+        await game.save();
+        await updateUserStats(game);
+      } else {
+        game.status = 'IN_PROGRESS';
+        game.activeStage = 'ROCK_PAPER_SCISSORS';
+        await game.save();
+      }
+
+      const resultPayload = {
+        code: upper,
+        result: winner,
+        hostMove: hostMove || 'timeout',
+        guestMove: guestMove || 'timeout',
+        hostScore: game.hostScore,
+        guestScore: game.guestScore,
+        isGameComplete,
+        winner: isGameComplete ? (game.hostScore >= 10 ? 'host' : 'guest') : null,
+        nextStage: isGameComplete ? null : 'ROCK_PAPER_SCISSORS',
+        timeout: true,
+        timedOutPlayer: timedOutPlayerId === hostId ? 'host' : 'guest',
+      };
+
+      io.to(upper).emit('roundResult', resultPayload);
+      timeoutTimers.delete(upper);
+      activeMatches.delete(upper);
+    };
 
     // Matching Pennies game handler
     socket.on('submitPenniesMove', async ({ code, choice }) => {
@@ -567,6 +669,18 @@ const initGameSocket = (io) => {
       if (!isParticipant) {
         socket.emit('game:error', 'You are not part of this game');
         return;
+      }
+
+      // Clear timeout timer for this player
+      const timeoutData = timeoutTimers.get(`pennies_${upper}`);
+      if (timeoutData) {
+        if (userId === hostId && timeoutData.hostTimer) {
+          clearTimeout(timeoutData.hostTimer);
+          timeoutData.hostTimer = null;
+        } else if (userId === guestId && timeoutData.guestTimer) {
+          clearTimeout(timeoutData.guestTimer);
+          timeoutData.guestTimer = null;
+        }
       }
 
       let state = activeMatches.get(`pennies_${upper}`);
@@ -652,6 +766,152 @@ const initGameSocket = (io) => {
       // Clear choices for next round
       state.choices = {};
       activeMatches.set(`pennies_${upper}`, state);
+      
+      // Clear timeout timers
+      timeoutTimers.delete(`pennies_${upper}`);
+
+      // If game continues, set up timeout timers for next round
+      if (!isGameComplete && game.penniesTimePerMove && game.penniesTimePerMove > 0) {
+        const timePerMove = game.penniesTimePerMove * 1000; // Convert to milliseconds
+        const timeoutData = {
+          hostTimer: setTimeout(() => handlePenniesTimeout(upper, hostId), timePerMove),
+          guestTimer: setTimeout(() => handlePenniesTimeout(upper, guestId), timePerMove),
+        };
+        timeoutTimers.set(`pennies_${upper}`, timeoutData);
+      }
+    });
+
+    // Handle timeout for Matching Pennies - player loses if they don't submit in time
+    const handlePenniesTimeout = async (code, timedOutPlayerId) => {
+      const upper = code.toUpperCase();
+      const game = await Game.findOne({ code: upper }).populate('host', 'username studentName').populate('guest', 'username studentName');
+      if (!game || !game.guest) return;
+
+      const state = activeMatches.get(`pennies_${upper}`);
+      if (!state) return;
+
+      // If player already submitted, ignore timeout
+      if (state.choices[timedOutPlayerId]) return;
+
+      const hostId = String(game.host?._id || game.host?.id || game.host);
+      const guestId = String(game.guest?._id || game.guest?.id || game.guest);
+      
+      // Determine which player timed out and award round to opponent
+      let winner = null;
+      let hostChoice = state.choices[hostId];
+      let guestChoice = state.choices[guestId];
+      
+      if (timedOutPlayerId === hostId) {
+        // Host timed out - guest wins (different choice rule)
+        winner = 'guest';
+        hostChoice = null; // Host didn't submit
+        game.guestPenniesScore += 1;
+      } else if (timedOutPlayerId === guestId) {
+        // Guest timed out - host wins (same choice rule)
+        winner = 'host';
+        guestChoice = null; // Guest didn't submit
+        game.hostPenniesScore += 1;
+      }
+
+      game.rounds.push({
+        gameType: 'MATCHING_PENNIES',
+        moves: [
+          { player: game.host, choice: hostChoice || 'timeout' },
+          { player: game.guest, choice: guestChoice || 'timeout' },
+        ],
+        winner: winner === 'host' ? game.host : game.guest,
+        summary: `${winner === 'host' ? game.host.studentName || game.host.username : game.guest.studentName || game.guest.username} wins - opponent ran out of time.`,
+      });
+
+      state.roundNumber += 1;
+      game.penniesRoundNumber = state.roundNumber;
+
+      const isGameComplete = game.hostPenniesScore >= 10 || game.guestPenniesScore >= 10;
+      if (isGameComplete) {
+        game.status = 'COMPLETE';
+        game.completedAt = new Date();
+        await game.save();
+        await updateUserStats(game);
+      } else {
+        game.status = 'IN_PROGRESS';
+        await game.save();
+      }
+
+      const resultPayload = {
+        code: upper,
+        winner: isGameComplete ? (game.hostPenniesScore >= 10 ? 'host' : 'guest') : winner,
+        hostChoice: hostChoice || 'timeout',
+        guestChoice: guestChoice || 'timeout',
+        hostWon: winner === 'host',
+        hostScore: game.hostPenniesScore,
+        guestScore: game.guestPenniesScore,
+        roundNumber: state.roundNumber - 1,
+        isGameComplete,
+        timeout: true,
+        timedOutPlayer: timedOutPlayerId === hostId ? 'host' : 'guest',
+      };
+
+      io.to(upper).emit('penniesResult', resultPayload);
+      
+      // Clear choices for next round
+      state.choices = {};
+      activeMatches.set(`pennies_${upper}`, state);
+      timeoutTimers.delete(`pennies_${upper}`);
+    };
+
+    // Start round - set up timeout timers for RPS and Matching Pennies
+    socket.on('startRound', async ({ code, gameType }) => {
+      const upper = code?.toUpperCase();
+      if (!upper) return;
+
+      const game = await Game.findOne({ code: upper });
+      if (!game || !game.guest) return;
+
+      if (gameType === 'ROCK_PAPER_SCISSORS' && game.rpsTimePerMove && game.rpsTimePerMove > 0) {
+        const hostId = String(game.host);
+        const guestId = String(game.guest);
+        const timePerMove = game.rpsTimePerMove * 1000;
+        
+        // Clear any existing timers
+        const existing = timeoutTimers.get(upper);
+        if (existing) {
+          if (existing.hostTimer) clearTimeout(existing.hostTimer);
+          if (existing.guestTimer) clearTimeout(existing.guestTimer);
+        }
+        
+        const timeoutData = {
+          hostTimer: setTimeout(() => handleRPSTimeout(upper, hostId, guestId), timePerMove),
+          guestTimer: setTimeout(() => handleRPSTimeout(upper, guestId, hostId), timePerMove),
+        };
+        timeoutTimers.set(upper, timeoutData);
+        
+        // Initialize state for the round
+        if (!activeMatches.has(upper)) {
+          activeMatches.set(upper, { moves: {} });
+        }
+      } else if (gameType === 'MATCHING_PENNIES' && game.penniesTimePerMove && game.penniesTimePerMove > 0) {
+        const hostId = String(game.host?._id || game.host?.id || game.host);
+        const guestId = String(game.guest?._id || game.guest?.id || game.guest);
+        const timePerMove = game.penniesTimePerMove * 1000;
+        
+        // Clear any existing timers
+        const existing = timeoutTimers.get(`pennies_${upper}`);
+        if (existing) {
+          if (existing.hostTimer) clearTimeout(existing.hostTimer);
+          if (existing.guestTimer) clearTimeout(existing.guestTimer);
+        }
+        
+        const timeoutData = {
+          hostTimer: setTimeout(() => handlePenniesTimeout(upper, hostId), timePerMove),
+          guestTimer: setTimeout(() => handlePenniesTimeout(upper, guestId), timePerMove),
+        };
+        timeoutTimers.set(`pennies_${upper}`, timeoutData);
+        
+        // Initialize state for the round
+        if (!activeMatches.has(`pennies_${upper}`)) {
+          activeMatches.set(`pennies_${upper}`, { choices: {}, roundNumber: game.penniesRoundNumber || 0 });
+        }
+      }
     });
 
     // Game of Go handler
