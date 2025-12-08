@@ -47,6 +47,10 @@ const gameSchema = new mongoose.Schema(
     hostPenniesScore: { type: Number, default: 0 },
     guestPenniesScore: { type: Number, default: 0 },
     penniesRoundNumber: { type: Number, default: 0 },
+    rpsTimePerMove: { type: Number, default: 0 }, // 0 = no timer, 5 or 10 seconds
+    penniesTimePerMove: { type: Number, default: 0 }, // 0 = no timer, 5 or 10 seconds
+    rpsLastMoveTime: { type: Date, default: null }, // When current player's turn started
+    penniesLastMoveTime: { type: Date, default: null }, // When current player's turn started
     goBoard: { type: [[String]], default: null }, // NxN board: null, 'black', or 'white'
     goPreviousBoard: { type: [[String]], default: null }, // For Ko rule - previous board state
     goBoardSize: { type: Number, default: 9 },

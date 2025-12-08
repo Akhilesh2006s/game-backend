@@ -221,6 +221,108 @@ router.get('/', authGuard, async (req, res) => {
   }
 });
 
+// Search for players and games
+router.get('/search', authGuard, async (req, res) => {
+  try {
+    const { query: searchQuery, type } = req.query; // type: 'code', 'enrollment', 'name', or 'all'
+    
+    if (!searchQuery || searchQuery.trim().length === 0) {
+      return res.json({ players: [], games: [] });
+    }
+
+    const searchLower = searchQuery.trim().toLowerCase();
+
+    // Search for games by code
+    const gamesByCode = await Game.find({
+      code: { $regex: searchLower, $options: 'i' },
+      status: { $in: ['WAITING', 'READY'] }, // Only show games waiting for players
+    })
+      .populate('host', 'username studentName avatarColor email')
+      .populate('guest', 'username studentName avatarColor email')
+      .select('code host guest status activeStage createdAt')
+      .limit(20)
+      .lean();
+
+    // Search for users/players by name, username, or enrollment
+    let userQuery = {};
+    
+    if (type === 'code') {
+      // Only search games by code
+      const gamesWithEnrollment = await Promise.all(
+        gamesByCode.map(async (game) => {
+          if (game.host?.email) {
+            const hostStudent = await Student.findOne({ email: game.host.email.toLowerCase() });
+            if (hostStudent) game.host.enrollmentNo = hostStudent.enrollmentNo;
+          }
+          if (game.guest?.email) {
+            const guestStudent = await Student.findOne({ email: game.guest.email.toLowerCase() });
+            if (guestStudent) game.guest.enrollmentNo = guestStudent.enrollmentNo;
+          }
+          return game;
+        })
+      );
+      return res.json({ players: [], games: gamesWithEnrollment });
+    }
+
+    // Get all students matching the search
+    const matchingStudents = await Student.find({
+      $or: [
+        { enrollmentNo: { $regex: searchLower, $options: 'i' } },
+        { firstName: { $regex: searchLower, $options: 'i' } },
+        { lastName: { $regex: searchLower, $options: 'i' } },
+        { email: { $regex: searchLower, $options: 'i' } },
+      ]
+    }).limit(50).lean();
+
+    const studentEmails = matchingStudents.map(s => s.email.toLowerCase());
+    
+    // Get users matching those students
+    const matchingUsers = await User.find({
+      email: { $in: studentEmails },
+      role: { $ne: 'admin' },
+      _id: { $ne: req.user.id } // Exclude current user
+    })
+      .select('username studentName email avatarColor')
+      .limit(50)
+      .lean();
+
+    // Enrich users with enrollment numbers
+    const studentMap = new Map();
+    matchingStudents.forEach(s => {
+      studentMap.set(s.email.toLowerCase(), s);
+    });
+
+    const players = matchingUsers.map(user => {
+      const student = studentMap.get(user.email.toLowerCase());
+      return {
+        ...user,
+        enrollmentNo: student?.enrollmentNo || null,
+        fullName: student ? `${student.firstName} ${student.lastName || ''}`.trim() : null,
+      };
+    });
+
+    // Add enrollment numbers to games
+    const gamesWithEnrollment = await Promise.all(
+      gamesByCode.map(async (game) => {
+        if (game.host?.email) {
+          const hostStudent = await Student.findOne({ email: game.host.email.toLowerCase() });
+          if (hostStudent) game.host.enrollmentNo = hostStudent.enrollmentNo;
+        }
+        if (game.guest?.email) {
+          const guestStudent = await Student.findOne({ email: game.guest.email.toLowerCase() });
+          if (guestStudent) game.guest.enrollmentNo = guestStudent.enrollmentNo;
+        }
+        return game;
+      })
+    );
+
+    res.json({ players, games: gamesWithEnrollment });
+  } catch (err) {
+    console.error('Error searching players/games:', err);
+    res.status(500).json({ message: 'Failed to search' });
+  }
+});
+
 router.post('/start-pennies', authGuard, async (req, res) => {
   try {
     // Block admin users from starting games
@@ -229,7 +331,7 @@ router.post('/start-pennies', authGuard, async (req, res) => {
       return res.status(403).json({ message: 'Admin users cannot start games' });
     }
 
-    const { code } = req.body;
+    const { code, timePerMove } = req.body;
     const game = await Game.findOne({ code });
     if (!game) {
       return res.status(404).json({ message: 'Game not found' });
@@ -243,6 +345,11 @@ router.post('/start-pennies', authGuard, async (req, res) => {
 
     game.activeStage = 'MATCHING_PENNIES';
     game.status = 'READY';
+    // Set time per move if provided (must be 0, 5, or 10)
+    if (timePerMove !== undefined && [0, 5, 10].includes(Number(timePerMove))) {
+      game.penniesTimePerMove = Number(timePerMove);
+    }
+    game.penniesLastMoveTime = new Date(); // Start timer for first move
     await game.save();
     await game.populate([
       { path: 'host', select: 'username studentName avatarColor' },
@@ -392,7 +499,7 @@ router.post('/start-rps', authGuard, async (req, res) => {
       return res.status(403).json({ message: 'Admin users cannot start games' });
     }
 
-    const { code } = req.body;
+    const { code, timePerMove } = req.body;
     const game = await Game.findOne({ code });
     if (!game) {
       return res.status(404).json({ message: 'Game not found' });
@@ -406,6 +513,11 @@ router.post('/start-rps', authGuard, async (req, res) => {
 
     game.activeStage = 'ROCK_PAPER_SCISSORS';
     game.status = 'READY';
+    // Set time per move if provided (must be 0, 5, or 10)
+    if (timePerMove !== undefined && [0, 5, 10].includes(Number(timePerMove))) {
+      game.rpsTimePerMove = Number(timePerMove);
+    }
+    game.rpsLastMoveTime = new Date(); // Start timer for first move
     await game.save();
     await game.populate([
       { path: 'host', select: 'username studentName avatarColor' },
