@@ -511,7 +511,10 @@ const initGameSocket = (io) => {
             : `${result.toUpperCase()} wipes the board this round.`,
       });
 
-      const isGameComplete = game.hostScore >= 10 || game.guestScore >= 10;
+      // Count ROCK_PAPER_SCISSORS rounds to check if game is complete (30 rounds total)
+      const rpsRoundsCount = game.rounds.filter(r => r.gameType === 'ROCK_PAPER_SCISSORS').length;
+      const isGameComplete = rpsRoundsCount >= 30;
+      
       if (isGameComplete) {
         game.status = 'COMPLETE';
         game.completedAt = new Date();
@@ -524,6 +527,18 @@ const initGameSocket = (io) => {
         await game.save();
       }
 
+      // Determine winner based on scores after 30 rounds
+      let winner = null;
+      if (isGameComplete) {
+        if (game.hostScore > game.guestScore) {
+          winner = 'host';
+        } else if (game.guestScore > game.hostScore) {
+          winner = 'guest';
+        } else {
+          winner = null; // Draw
+        }
+      }
+
       const resultPayload = {
         code: upper,
         result,
@@ -532,8 +547,10 @@ const initGameSocket = (io) => {
         hostScore: game.hostScore,
         guestScore: game.guestScore,
         isGameComplete,
-        winner: isGameComplete ? (game.hostScore >= 10 ? 'host' : 'guest') : null,
+        winner,
         nextStage: isGameComplete ? null : 'ROCK_PAPER_SCISSORS',
+        roundsPlayed: rpsRoundsCount,
+        totalRounds: 30,
       };
 
       console.log(`[${upper}] Emitting roundResult:`, resultPayload);
