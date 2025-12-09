@@ -1806,8 +1806,8 @@ const initGameSocket = (io) => {
         ? (game.host?.studentName || game.host?.username || 'You')
         : (game.guest?.studentName || game.guest?.username || 'You');
 
-      // Send rematch request to opponent
-      io.to(upper).emit('rematch:requested', {
+      // Send rematch request to opponent only (not to the requester)
+      socket.to(upper).emit('rematch:requested', {
         code: upper,
         requesterId: userId,
         requesterName,
