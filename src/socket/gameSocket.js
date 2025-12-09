@@ -1989,6 +1989,57 @@ const initGameSocket = (io) => {
         penniesTimePerMove: game.penniesTimePerMove,
       });
 
+      // Initialize Go game state if it's a Go game
+      if (game.activeStage === 'GAME_OF_GO') {
+        const createEmptyBoard = (size) => Array(size).fill(null).map(() => Array(size).fill(null));
+        const getPositionHash = (board, nextTurn) => JSON.stringify({ board, next: nextTurn });
+        const FIXED_KOMI = 7.5;
+        
+        const boardSize = game.goBoardSize || 9;
+        const initialBoard = createEmptyBoard(boardSize);
+        const initialHash = getPositionHash(initialBoard, 'black');
+        
+        newGame.goBoard = initialBoard;
+        newGame.goPreviousBoard = null;
+        newGame.goCurrentTurn = 'black';
+        newGame.goCapturedBlack = 0;
+        newGame.goCapturedWhite = 0;
+        newGame.goConsecutivePasses = 0;
+        newGame.goKomi = FIXED_KOMI;
+        newGame.goPositionHashes = [initialHash];
+        newGame.goDeadStones = [];
+        newGame.goPhase = 'PLAY';
+        newGame.goFinalScore = null;
+        newGame.goScoringConfirmations = [];
+        newGame.goPendingScoringMethod = 'chinese';
+        
+        // Initialize time state if time control exists
+        if (game.goTimeControl && game.goTimeControl.mode && game.goTimeControl.mode !== 'none' && game.goTimeControl.mainTime > 0) {
+          newGame.goTimeState = {
+            black: {
+              mainTime: game.goTimeControl.mainTime,
+              isByoYomi: false,
+              byoYomiTime: 0,
+              byoYomiPeriods: 0,
+            },
+            white: {
+              mainTime: game.goTimeControl.mainTime,
+              isByoYomi: false,
+              byoYomiTime: 0,
+              byoYomiPeriods: 0,
+            },
+          };
+          newGame.goLastMoveTime = null; // Will be set when first move is made
+        } else {
+          newGame.goTimeState = {
+            black: { mainTime: 0, isByoYomi: false, byoYomiTime: 0, byoYomiPeriods: 0 },
+            white: { mainTime: 0, isByoYomi: false, byoYomiTime: 0, byoYomiPeriods: 0 },
+          };
+          newGame.goLastMoveTime = null;
+        }
+        newGame.goTimeExpired = null;
+      }
+
       await newGame.save();
       await newGame.populate('host', 'username studentName avatarColor email');
       await newGame.populate('guest', 'username studentName avatarColor email');
