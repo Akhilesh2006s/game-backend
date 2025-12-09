@@ -244,8 +244,12 @@ router.get('/search', authGuard, async (req, res) => {
     const searchLower = hasQuery ? searchQuery.trim().toLowerCase() : '';
 
     // Get all available games (waiting for players) or search by code
+    // Only show games created in the last 30 minutes (indicating player is likely still online)
+    const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
     let gamesQuery = {
       status: { $in: ['WAITING', 'READY'] }, // Only show games waiting for players
+      guest: null, // Only games without a guest (waiting for opponent)
+      createdAt: { $gte: thirtyMinutesAgo }, // Only recently created games (last 30 minutes)
     };
     
     if (hasQuery && (type === 'all' || type === 'code' || !type)) {
@@ -255,7 +259,7 @@ router.get('/search', authGuard, async (req, res) => {
     const gamesByCode = await Game.find(gamesQuery)
       .populate('host', 'username studentName avatarColor email')
       .populate('guest', 'username studentName avatarColor email')
-      .select('code host guest status activeStage createdAt')
+      .select('code host guest status activeStage createdAt rpsTimePerMove penniesTimePerMove goBoardSize goTimeControl pendingGameSettings')
       .limit(hasQuery ? 20 : 50) // Show more when no query
       .lean();
 
@@ -279,21 +283,20 @@ router.get('/search', authGuard, async (req, res) => {
       return res.json({ players: [], games: gamesWithEnrollment });
     }
 
-    // Get active users - only those who are currently in games (WAITING, READY, or IN_PROGRESS)
-    const activeGames = await Game.find({
-      status: { $in: ['WAITING', 'READY', 'IN_PROGRESS'] }
+    // Get only players who have created games and are currently waiting (indicating they're online)
+    // Only include games that are waiting for opponents (no guest) - these are players who just created codes
+    const waitingGames = await Game.find({
+      status: { $in: ['WAITING', 'READY'] },
+      guest: null // Only games without a guest (waiting for opponent)
     })
-      .select('host guest')
+      .select('host')
       .lean();
     
-    // Collect all active user IDs (excluding current user)
+    // Collect user IDs of players who created games and are waiting (excluding current user)
     const activeUserIds = new Set();
-    activeGames.forEach(game => {
+    waitingGames.forEach(game => {
       if (game.host && game.host.toString() !== req.user.id.toString()) {
         activeUserIds.add(game.host.toString());
-      }
-      if (game.guest && game.guest.toString() !== req.user.id.toString()) {
-        activeUserIds.add(game.guest.toString());
       }
     });
     
