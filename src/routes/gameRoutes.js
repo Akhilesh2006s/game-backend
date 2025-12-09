@@ -378,14 +378,26 @@ router.post('/start-pennies', authGuard, async (req, res) => {
     if (String(game.host) !== req.user.id && String(game.guest) !== req.user.id) {
       return res.status(403).json({ message: 'You are not part of this game' });
     }
+    
+    // If no guest yet, store pending settings and return
     if (!game.guest) {
-      return res.status(400).json({ message: 'Waiting for opponent to join' });
+      if (String(game.host) !== req.user.id) {
+        return res.status(403).json({ message: 'Only host can start game before guest joins' });
+      }
+      game.pendingGameSettings = {
+        gameType: 'MATCHING_PENNIES',
+        timePerMove: req.body.timePerMove || 15,
+      };
+      await game.save();
+      await game.populate('host', 'username studentName avatarColor');
+      return res.json({ game, pending: true });
     }
 
     game.activeStage = 'MATCHING_PENNIES';
     game.status = 'READY';
     // Set time per move (default to 15 seconds if not provided)
     game.penniesTimePerMove = req.body.timePerMove || 15;
+    game.pendingGameSettings = null; // Clear pending settings
     await game.save();
     await game.populate([
       { path: 'host', select: 'username studentName avatarColor' },
@@ -543,14 +555,26 @@ router.post('/start-rps', authGuard, async (req, res) => {
     if (String(game.host) !== req.user.id && String(game.guest) !== req.user.id) {
       return res.status(403).json({ message: 'You are not part of this game' });
     }
+    
+    // If no guest yet, store pending settings and return
     if (!game.guest) {
-      return res.status(400).json({ message: 'Waiting for opponent to join' });
+      if (String(game.host) !== req.user.id) {
+        return res.status(403).json({ message: 'Only host can start game before guest joins' });
+      }
+      game.pendingGameSettings = {
+        gameType: 'ROCK_PAPER_SCISSORS',
+        timePerMove: req.body.timePerMove || 15,
+      };
+      await game.save();
+      await game.populate('host', 'username studentName avatarColor');
+      return res.json({ game, pending: true });
     }
 
     game.activeStage = 'ROCK_PAPER_SCISSORS';
     game.status = 'READY';
     // Set time per move (default to 15 seconds if not provided)
     game.rpsTimePerMove = req.body.timePerMove || 15;
+    game.pendingGameSettings = null; // Clear pending settings
     await game.save();
     await game.populate([
       { path: 'host', select: 'username studentName avatarColor' },
@@ -592,7 +616,7 @@ router.post('/start-rps', authGuard, async (req, res) => {
 });
 
 const DEFAULT_SIZES = [9, 13, 19];
-const FIXED_KOMI = 6.5; // Fixed komi compensation for all board sizes
+const FIXED_KOMI = 7.5; // Fixed komi compensation for all board sizes
 
 const createEmptyBoard = (size) => Array(size).fill(null).map(() => Array(size).fill(null));
 
@@ -624,7 +648,7 @@ router.post('/start-go', authGuard, async (req, res) => {
     console.log('Converted boardSize to number:', numBoardSize, 'Is in DEFAULT_SIZES?', DEFAULT_SIZES.includes(numBoardSize));
     const resolvedSize = DEFAULT_SIZES.includes(numBoardSize) ? numBoardSize : 9;
     console.log('Resolved size:', resolvedSize, 'Previous game.goBoardSize:', game.goBoardSize);
-    // Komi is fixed at 6.5 for all board sizes
+    // Komi is fixed at 7.5 for all board sizes
     const resolvedKomi = FIXED_KOMI;
 
     const initialBoard = createEmptyBoard(resolvedSize);

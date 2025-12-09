@@ -54,7 +54,7 @@ const gameSchema = new mongoose.Schema(
     goBoard: { type: [[String]], default: null }, // NxN board: null, 'black', or 'white'
     goPreviousBoard: { type: [[String]], default: null }, // For Ko rule - previous board state
     goBoardSize: { type: Number, default: 9 },
-    goKomi: { type: Number, default: 6.5 },
+    goKomi: { type: Number, default: 7.5 },
     goPositionHashes: { type: [String], default: [] }, // Superko tracking
     goCurrentTurn: { type: String, enum: ['black', 'white'], default: 'black' },
     goCapturedBlack: { type: Number, default: 0 },
@@ -109,6 +109,15 @@ const gameSchema = new mongoose.Schema(
       enum: ['ROCK_PAPER_SCISSORS', 'GAME_OF_GO', 'MATCHING_PENNIES'],
       default: null,
       required: false,
+    },
+    pendingGameSettings: {
+      type: {
+        gameType: String,
+        boardSize: Number,
+        timeControl: mongoose.Schema.Types.Mixed,
+        timePerMove: Number,
+      },
+      default: null,
     },
     rounds: [roundSchema],
     completedAt: Date,
