@@ -259,7 +259,7 @@ router.get('/search', authGuard, async (req, res) => {
     const gamesByCode = await Game.find(gamesQuery)
       .populate('host', 'username studentName avatarColor email')
       .populate('guest', 'username studentName avatarColor email')
-      .select('code host guest status activeStage createdAt rpsTimePerMove penniesTimePerMove goBoardSize goTimeControl pendingGameSettings')
+      .select('code host guest status activeStage createdAt rpsTimePerMove penniesTimePerMove goBoardSize goTimeControl pendingGameSettings goKomi')
       .limit(hasQuery ? 20 : 50) // Show more when no query
       .lean();
 
