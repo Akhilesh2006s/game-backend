@@ -1298,18 +1298,20 @@ const initGameSocket = (io) => {
         game.goPhase = 'COMPLETE';
         game.status = 'COMPLETE';
         game.completedAt = new Date();
-        const winner = game.goTimeExpired === 'black' ? 'white' : 'black';
+        const winnerColor = game.goTimeExpired === 'black' ? 'white' : 'black';
+        const winner = winnerColor === 'black' ? 'host' : 'guest';
+        // Set final score with reason but NO scoring details
         game.goFinalScore = {
-          winner,
-          reason: 'time',
-          message: `${game.goTimeExpired === 'black' ? 'Black' : 'White'} ran out of time. ${winner === 'black' ? 'Black' : 'White'} wins.`,
+          winner: winnerColor,
+          reason: 'timeout',
+          message: `${game.goTimeExpired === 'black' ? 'Black' : 'White'} ran out of time. ${winnerColor === 'black' ? 'Black' : 'White'} wins.`,
         };
         await game.save();
         await updateUserStats(game);
         io.to(upper).emit('goTimeExpired', {
           code: upper,
           expired: game.goTimeExpired,
-          winner,
+          winner: winnerColor,
           message: game.goFinalScore.message,
         });
         return;
@@ -1587,6 +1589,70 @@ const initGameSocket = (io) => {
         code: upper,
         method: selectedMethod,
         ...scoreSummary,
+      });
+    });
+
+    // Resign handler for Game of Go - ends game without scoring
+    socket.on('resignGo', async ({ code }) => {
+      const upper = code?.toUpperCase();
+      if (!upper) {
+        socket.emit('game:error', 'Invalid code');
+        return;
+      }
+
+      const rooms = Array.from(socket.rooms);
+      if (!rooms.includes(upper)) {
+        socket.emit('game:error', 'Please join the game first');
+        return;
+      }
+
+      const game = await Game.findOne({ code: upper }).populate('host', 'username studentName').populate('guest', 'username studentName');
+      if (!game) {
+        socket.emit('game:error', 'Game not found');
+        return;
+      }
+
+      if (game.activeStage !== 'GAME_OF_GO') {
+        socket.emit('game:error', 'Game of Go is not active');
+        return;
+      }
+
+      if (game.goPhase === 'COMPLETE') {
+        socket.emit('game:error', 'Game is already complete');
+        return;
+      }
+
+      const userId = String(socket.user.id);
+      const hostId = String(game.host?._id || game.host?.id || game.host);
+      const guestId = String(game.guest?._id || game.guest?.id || game.guest);
+      if (userId !== hostId && userId !== guestId) {
+        socket.emit('game:error', 'You are not part of this game');
+        return;
+      }
+
+      // Determine winner - the player who resigned loses
+      const resigningColor = userId === hostId ? 'black' : 'white';
+      const winnerColor = resigningColor === 'black' ? 'white' : 'black';
+      const winner = winnerColor === 'black' ? 'host' : 'guest';
+
+      // End game without scoring
+      game.goPhase = 'COMPLETE';
+      game.status = 'COMPLETE';
+      game.completedAt = new Date();
+      game.goFinalScore = {
+        winner: winnerColor,
+        reason: 'resignation',
+        message: `${resigningColor === 'black' ? 'Black' : 'White'} resigned. ${winnerColor === 'black' ? 'Black' : 'White'} wins.`,
+      };
+
+      await game.save();
+      await updateUserStats(game);
+
+      io.to(upper).emit('goResigned', {
+        code: upper,
+        resigningColor,
+        winner: winnerColor,
+        message: game.goFinalScore.message,
       });
     });
 
