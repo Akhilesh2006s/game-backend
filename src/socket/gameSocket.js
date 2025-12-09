@@ -466,7 +466,7 @@ const initGameSocket = (io) => {
 
       let state = activeMatches.get(upper);
       if (!state) {
-        state = { moves: {} };
+        state = { moves: {}, timeoutProcessed: false };
         activeMatches.set(upper, state);
       }
 
@@ -601,8 +601,8 @@ const initGameSocket = (io) => {
           intervalTimer,
         };
         timeoutTimers.set(upper, timeoutData);
-        // Initialize state for next round
-        activeMatches.set(upper, { moves: {} });
+        // Initialize state for next round (reset timeoutProcessed flag)
+        activeMatches.set(upper, { moves: {}, timeoutProcessed: false });
       }
     });
 
@@ -627,21 +627,40 @@ const initGameSocket = (io) => {
       const hostId = String(game.host);
       const guestId = String(game.guest);
       
-      // Determine which player timed out and award round to opponent
-      let winner = null;
-      let hostMove = state.moves[hostId];
-      let guestMove = state.moves[guestId];
+      // Check if both players timed out
+      const hostMove = state.moves[hostId];
+      const guestMove = state.moves[guestId];
       
-      if (timedOutPlayerId === hostId) {
+      // If timeout was already processed (state has a processed flag), ignore
+      if (state.timeoutProcessed) {
+        return;
+      }
+      
+      // Mark timeout as being processed to prevent double processing
+      state.timeoutProcessed = true;
+      activeMatches.set(upper, state);
+      
+      // If both players timed out, it's a draw (no points, but round counts)
+      let winner = null;
+      let winnerUserId = null;
+      
+      if (!hostMove && !guestMove) {
+        // Both timed out - draw, no points awarded
+        winner = 'draw';
+      } else if (!hostMove) {
         // Host timed out - guest wins
         winner = 'guest';
-        hostMove = null; // Host didn't submit
+        winnerUserId = game.guest;
         game.guestScore += 1;
-      } else if (timedOutPlayerId === guestId) {
+      } else if (!guestMove) {
         // Guest timed out - host wins
         winner = 'host';
-        guestMove = null; // Guest didn't submit
+        winnerUserId = game.host;
         game.hostScore += 1;
+      } else {
+        // Both submitted (shouldn't reach here due to check above)
+        state.timeoutProcessed = false;
+        return;
       }
 
       game.rounds.push({
@@ -650,11 +669,16 @@ const initGameSocket = (io) => {
           { player: game.host, choice: hostMove || 'timeout' },
           { player: game.guest, choice: guestMove || 'timeout' },
         ],
-        winner: winner === 'host' ? game.host : game.guest,
-        summary: `${winner === 'host' ? 'Host' : 'Guest'} wins - opponent ran out of time.`,
+        winner: winnerUserId,
+        summary: winner === 'draw' 
+          ? 'Both players ran out of time - draw!'
+          : `${winner === 'host' ? 'Host' : 'Guest'} wins - opponent ran out of time.`,
       });
 
-      const isGameComplete = game.hostScore >= 10 || game.guestScore >= 10;
+      // Count ROCK_PAPER_SCISSORS rounds to check if game is complete (30 rounds total)
+      const rpsRoundsCount = game.rounds.filter(r => r.gameType === 'ROCK_PAPER_SCISSORS').length;
+      const isGameComplete = rpsRoundsCount >= 30;
+      
       if (isGameComplete) {
         game.status = 'COMPLETE';
         game.completedAt = new Date();
@@ -667,6 +691,18 @@ const initGameSocket = (io) => {
         await game.save();
       }
 
+      // Determine winner based on scores after 30 rounds
+      let finalWinner = null;
+      if (isGameComplete) {
+        if (game.hostScore > game.guestScore) {
+          finalWinner = 'host';
+        } else if (game.guestScore > game.hostScore) {
+          finalWinner = 'guest';
+        } else {
+          finalWinner = null; // Draw
+        }
+      }
+
       const resultPayload = {
         code: upper,
         result: winner,
@@ -675,15 +711,56 @@ const initGameSocket = (io) => {
         hostScore: game.hostScore,
         guestScore: game.guestScore,
         isGameComplete,
-        winner: isGameComplete ? (game.hostScore >= 10 ? 'host' : 'guest') : null,
+        winner: finalWinner,
         nextStage: isGameComplete ? null : 'ROCK_PAPER_SCISSORS',
         timeout: true,
-        timedOutPlayer: timedOutPlayerId === hostId ? 'host' : 'guest',
+        timedOutPlayer: hostTimedOut ? 'host' : guestTimedOut ? 'guest' : 'both',
+        roundsPlayed: rpsRoundsCount,
+        totalRounds: 30,
       };
 
       io.to(upper).emit('roundResult', resultPayload);
       timeoutTimers.delete(upper);
       activeMatches.delete(upper);
+      
+      // If game continues, set up timeout timers for next round
+      if (!isGameComplete && game.rpsTimePerMove && game.rpsTimePerMove > 0) {
+        const timePerMove = game.rpsTimePerMove * 1000;
+        
+        // Store round start time
+        const roundStartTime = Date.now();
+        let timeRemaining = game.rpsTimePerMove;
+        
+        // Send initial timer update
+        io.to(upper).emit('rpsTimerUpdate', {
+          timeRemaining,
+          roundStartTime,
+        });
+        
+        // Send periodic timer updates every second
+        const intervalTimer = setInterval(() => {
+          const elapsed = Math.floor((Date.now() - roundStartTime) / 1000);
+          timeRemaining = Math.max(0, game.rpsTimePerMove - elapsed);
+          
+          io.to(upper).emit('rpsTimerUpdate', {
+            timeRemaining,
+            roundStartTime,
+          });
+          
+          if (timeRemaining <= 0) {
+            clearInterval(intervalTimer);
+          }
+        }, 1000);
+        
+        const timeoutData = {
+          hostTimer: setTimeout(() => handleRPSTimeout(upper, hostId, guestId), timePerMove),
+          guestTimer: setTimeout(() => handleRPSTimeout(upper, guestId, hostId), timePerMove),
+          intervalTimer,
+        };
+        timeoutTimers.set(upper, timeoutData);
+        // Initialize state for next round
+        activeMatches.set(upper, { moves: {} });
+      }
     };
 
     // Matching Pennies game handler
@@ -1009,7 +1086,7 @@ const initGameSocket = (io) => {
         
         // Initialize state for the round
         if (!activeMatches.has(upper)) {
-          activeMatches.set(upper, { moves: {} });
+          activeMatches.set(upper, { moves: {}, timeoutProcessed: false });
         }
       } else if (gameType === 'MATCHING_PENNIES' && game.penniesTimePerMove && game.penniesTimePerMove > 0) {
         const hostId = String(game.host?._id || game.host?.id || game.host);

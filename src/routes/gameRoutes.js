@@ -683,6 +683,7 @@ router.post('/start-rps', authGuard, async (req, res) => {
         },
         status: game.status,
         activeStage: game.activeStage,
+        rpsTimePerMove: game.rpsTimePerMove,
         createdAt: game.createdAt,
         updatedAt: game.updatedAt,
       };
@@ -690,6 +691,10 @@ router.post('/start-rps', authGuard, async (req, res) => {
         game: gameData,
         gameType: 'ROCK_PAPER_SCISSORS',
       });
+      
+      // Auto-start timer for first round if time per move is set
+      // The timer will be initialized by the client emitting startRound, or we can trigger it here
+      // For now, clients will auto-trigger startRound when they receive game:started
     }
 
     res.json({ game });
