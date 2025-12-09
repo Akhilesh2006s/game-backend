@@ -540,15 +540,48 @@ const initGameSocket = (io) => {
       io.to(upper).emit('roundResult', resultPayload);
 
       // Clear timeout timers
+      const existing = timeoutTimers.get(upper);
+      if (existing) {
+        if (existing.hostTimer) clearTimeout(existing.hostTimer);
+        if (existing.guestTimer) clearTimeout(existing.guestTimer);
+        if (existing.intervalTimer) clearInterval(existing.intervalTimer);
+      }
       timeoutTimers.delete(upper);
       activeMatches.delete(upper);
 
       // If game continues, set up timeout timers for next round
       if (!isGameComplete && game.rpsTimePerMove && game.rpsTimePerMove > 0) {
         const timePerMove = game.rpsTimePerMove * 1000; // Convert to milliseconds
+        
+        // Store round start time
+        const roundStartTime = Date.now();
+        let timeRemaining = game.rpsTimePerMove;
+        
+        // Send initial timer update
+        io.to(upper).emit('rpsTimerUpdate', {
+          timeRemaining,
+          roundStartTime,
+        });
+        
+        // Send periodic timer updates every second
+        const intervalTimer = setInterval(() => {
+          const elapsed = Math.floor((Date.now() - roundStartTime) / 1000);
+          timeRemaining = Math.max(0, game.rpsTimePerMove - elapsed);
+          
+          io.to(upper).emit('rpsTimerUpdate', {
+            timeRemaining,
+            roundStartTime,
+          });
+          
+          if (timeRemaining <= 0) {
+            clearInterval(intervalTimer);
+          }
+        }, 1000);
+        
         const timeoutData = {
           hostTimer: setTimeout(() => handleRPSTimeout(upper, hostId, guestId), timePerMove),
           guestTimer: setTimeout(() => handleRPSTimeout(upper, guestId, hostId), timePerMove),
+          intervalTimer,
         };
         timeoutTimers.set(upper, timeoutData);
         // Initialize state for next round
@@ -564,6 +597,12 @@ const initGameSocket = (io) => {
 
       const state = activeMatches.get(upper);
       if (!state) return;
+
+      // Clear timer interval
+      const existing = timeoutTimers.get(upper);
+      if (existing && existing.intervalTimer) {
+        clearInterval(existing.intervalTimer);
+      }
 
       // If player already submitted, ignore timeout
       if (state.moves[timedOutPlayerId]) return;
@@ -877,11 +916,38 @@ const initGameSocket = (io) => {
         if (existing) {
           if (existing.hostTimer) clearTimeout(existing.hostTimer);
           if (existing.guestTimer) clearTimeout(existing.guestTimer);
+          if (existing.intervalTimer) clearInterval(existing.intervalTimer);
         }
+        
+        // Store round start time
+        const roundStartTime = Date.now();
+        let timeRemaining = game.rpsTimePerMove;
+        
+        // Send initial timer update
+        io.to(upper).emit('rpsTimerUpdate', {
+          timeRemaining,
+          roundStartTime,
+        });
+        
+        // Send periodic timer updates every second
+        const intervalTimer = setInterval(() => {
+          const elapsed = Math.floor((Date.now() - roundStartTime) / 1000);
+          timeRemaining = Math.max(0, game.rpsTimePerMove - elapsed);
+          
+          io.to(upper).emit('rpsTimerUpdate', {
+            timeRemaining,
+            roundStartTime,
+          });
+          
+          if (timeRemaining <= 0) {
+            clearInterval(intervalTimer);
+          }
+        }, 1000);
         
         const timeoutData = {
           hostTimer: setTimeout(() => handleRPSTimeout(upper, hostId, guestId), timePerMove),
           guestTimer: setTimeout(() => handleRPSTimeout(upper, guestId, hostId), timePerMove),
+          intervalTimer,
         };
         timeoutTimers.set(upper, timeoutData);
         
