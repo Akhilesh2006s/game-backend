@@ -65,7 +65,77 @@ router.post('/join', authGuard, async (req, res) => {
 
     game.guest = req.user.id;
     game.status = 'READY';
-    game.activeStage = null; // No game selected yet, show game selector
+    
+    // Check if host already started a game (pending settings exist)
+    if (game.pendingGameSettings) {
+      const pending = game.pendingGameSettings;
+      
+      if (pending.gameType === 'ROCK_PAPER_SCISSORS') {
+        game.activeStage = 'ROCK_PAPER_SCISSORS';
+        game.rpsTimePerMove = pending.timePerMove || 15;
+      } else if (pending.gameType === 'MATCHING_PENNIES') {
+        game.activeStage = 'MATCHING_PENNIES';
+        game.penniesTimePerMove = pending.timePerMove || 15;
+      } else if (pending.gameType === 'GAME_OF_GO') {
+        game.activeStage = 'GAME_OF_GO';
+        const resolvedSize = pending.boardSize || 9;
+        const resolvedKomi = FIXED_KOMI;
+        const initialBoard = createEmptyBoard(resolvedSize);
+        const initialHash = getPositionHash(initialBoard, 'black');
+        game.set('goBoardSize', resolvedSize);
+        game.goBoard = initialBoard;
+        game.goPreviousBoard = null;
+        game.goCurrentTurn = 'black';
+        game.goCapturedBlack = 0;
+        game.goCapturedWhite = 0;
+        game.goConsecutivePasses = 0;
+        game.goKomi = resolvedKomi;
+        game.goPositionHashes = [initialHash];
+        game.goDeadStones = [];
+        game.goPhase = 'PLAY';
+        game.goFinalScore = null;
+        game.goScoringConfirmations = [];
+        game.goPendingScoringMethod = 'chinese';
+        
+        if (pending.timeControl && pending.timeControl.mode && pending.timeControl.mode !== 'none' && pending.timeControl.mainTime > 0) {
+          game.goTimeControl = {
+            mode: pending.timeControl.mode,
+            mainTime: pending.timeControl.mainTime,
+            increment: pending.timeControl.increment || 0,
+            byoYomiTime: pending.timeControl.byoYomiTime || 0,
+            byoYomiPeriods: pending.timeControl.byoYomiPeriods || 0,
+          };
+          game.goTimeState = {
+            black: {
+              mainTime: pending.timeControl.mainTime,
+              isByoYomi: false,
+              byoYomiTime: 0,
+              byoYomiPeriods: 0,
+            },
+            white: {
+              mainTime: pending.timeControl.mainTime,
+              isByoYomi: false,
+              byoYomiTime: 0,
+              byoYomiPeriods: 0,
+            },
+          };
+          game.goLastMoveTime = new Date();
+        } else {
+          game.goTimeControl = { mode: 'none', mainTime: 0, increment: 0, byoYomiTime: 0, byoYomiPeriods: 0 };
+          game.goTimeState = {
+            black: { mainTime: 0, isByoYomi: false, byoYomiTime: 0, byoYomiPeriods: 0 },
+            white: { mainTime: 0, isByoYomi: false, byoYomiTime: 0, byoYomiPeriods: 0 },
+          };
+          game.goLastMoveTime = null;
+        }
+        game.goTimeExpired = null;
+      }
+      
+      game.pendingGameSettings = null; // Clear pending settings
+    } else {
+      game.activeStage = null; // No game selected yet, show game selector
+    }
+    
     await game.save();
     await game.populate([
       { path: 'host', select: 'username studentName avatarColor' },
@@ -96,10 +166,19 @@ router.post('/join', authGuard, async (req, res) => {
         createdAt: game.createdAt,
         updatedAt: game.updatedAt,
       };
-      ioInstance.to(game.code.toUpperCase()).emit('game:guest_joined', {
-        game: gameData,
-        guestName: guestDisplayName,
-      });
+      
+      // If game auto-started, emit game:started event
+      if (game.activeStage) {
+        ioInstance.to(game.code.toUpperCase()).emit('game:started', {
+          game: gameData,
+          gameType: game.activeStage,
+        });
+      } else {
+        ioInstance.to(game.code.toUpperCase()).emit('game:guest_joined', {
+          game: gameData,
+          guestName: guestDisplayName,
+        });
+      }
     }
 
     res.json({ game });
@@ -640,16 +719,28 @@ router.post('/start-go', authGuard, async (req, res) => {
     if (String(game.host) !== req.user.id && String(game.guest) !== req.user.id) {
       return res.status(403).json({ message: 'You are not part of this game' });
     }
-    if (!game.guest) {
-      return res.status(400).json({ message: 'Waiting for opponent to join' });
-    }
-
+    
     const numBoardSize = Number(boardSize);
     console.log('Converted boardSize to number:', numBoardSize, 'Is in DEFAULT_SIZES?', DEFAULT_SIZES.includes(numBoardSize));
     const resolvedSize = DEFAULT_SIZES.includes(numBoardSize) ? numBoardSize : 9;
     console.log('Resolved size:', resolvedSize, 'Previous game.goBoardSize:', game.goBoardSize);
     // Komi is fixed at 7.5 for all board sizes
     const resolvedKomi = FIXED_KOMI;
+    
+    // If no guest yet, store pending settings and return
+    if (!game.guest) {
+      if (String(game.host) !== req.user.id) {
+        return res.status(403).json({ message: 'Only host can start game before guest joins' });
+      }
+      game.pendingGameSettings = {
+        gameType: 'GAME_OF_GO',
+        boardSize: resolvedSize,
+        timeControl: timeControl || null,
+      };
+      await game.save();
+      await game.populate('host', 'username studentName avatarColor');
+      return res.json({ game, pending: true });
+    }
 
     const initialBoard = createEmptyBoard(resolvedSize);
     const initialHash = getPositionHash(initialBoard, 'black');
@@ -671,6 +762,7 @@ router.post('/start-go', authGuard, async (req, res) => {
     game.goFinalScore = null;
     game.goScoringConfirmations = [];
     game.goPendingScoringMethod = 'chinese';
+    game.pendingGameSettings = null; // Clear pending settings
     
     // Initialize time control
     if (timeControl && timeControl.mode && timeControl.mode !== 'none' && timeControl.mainTime > 0) {
