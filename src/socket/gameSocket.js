@@ -828,7 +828,7 @@ const initGameSocket = (io) => {
 
       let state = activeMatches.get(`pennies_${upper}`);
       if (!state) {
-        state = { choices: {}, roundNumber: game.penniesRoundNumber || 0 };
+        state = { choices: {}, roundNumber: game.penniesRoundNumber || 0, timeoutProcessed: false };
         activeMatches.set(`pennies_${upper}`, state);
       }
 
@@ -880,7 +880,10 @@ const initGameSocket = (io) => {
       state.roundNumber += 1;
       game.penniesRoundNumber = state.roundNumber;
 
-      const isGameComplete = game.hostPenniesScore >= 10 || game.guestPenniesScore >= 10;
+      // Count MATCHING_PENNIES rounds to check if game is complete (30 rounds total)
+      const penniesRoundsCount = game.rounds.filter(r => r.gameType === 'MATCHING_PENNIES').length;
+      const isGameComplete = penniesRoundsCount >= 30;
+      
       if (isGameComplete) {
         game.status = 'COMPLETE';
         game.completedAt = new Date();
@@ -891,9 +894,21 @@ const initGameSocket = (io) => {
         await game.save();
       }
 
+      // Determine winner based on scores after 30 rounds
+      let finalWinner = null;
+      if (isGameComplete) {
+        if (game.hostPenniesScore > game.guestPenniesScore) {
+          finalWinner = 'host';
+        } else if (game.guestPenniesScore > game.hostPenniesScore) {
+          finalWinner = 'guest';
+        } else {
+          finalWinner = null; // Draw
+        }
+      }
+
       const resultPayload = {
         code: upper,
-        winner: isGameComplete ? (game.hostPenniesScore >= 10 ? 'host' : 'guest') : winner,
+        winner: isGameComplete ? finalWinner : winner,
         hostChoice,
         guestChoice,
         hostWon,
@@ -901,6 +916,8 @@ const initGameSocket = (io) => {
         guestScore: game.guestPenniesScore,
         roundNumber: state.roundNumber - 1,
         isGameComplete,
+        roundsPlayed: penniesRoundsCount,
+        totalRounds: 30,
       };
 
       console.log(`[${upper}] Emitting penniesResult:`, resultPayload);
@@ -972,21 +989,40 @@ const initGameSocket = (io) => {
       const hostId = String(game.host?._id || game.host?.id || game.host);
       const guestId = String(game.guest?._id || game.guest?.id || game.guest);
       
-      // Determine which player timed out and award round to opponent
-      let winner = null;
-      let hostChoice = state.choices[hostId];
-      let guestChoice = state.choices[guestId];
+      // Check if both players timed out
+      const hostChoice = state.choices[hostId];
+      const guestChoice = state.choices[guestId];
       
-      if (timedOutPlayerId === hostId) {
+      // If timeout was already processed (state has a processed flag), ignore
+      if (state.timeoutProcessed) {
+        return;
+      }
+      
+      // Mark timeout as being processed to prevent double processing
+      state.timeoutProcessed = true;
+      activeMatches.set(`pennies_${upper}`, state);
+      
+      // If both players timed out, it's a draw (no points, but round counts)
+      let winner = null;
+      let winnerUserId = null;
+      
+      if (!hostChoice && !guestChoice) {
+        // Both timed out - draw, no points awarded
+        winner = 'draw';
+      } else if (!hostChoice) {
         // Host timed out - guest wins (different choice rule)
         winner = 'guest';
-        hostChoice = null; // Host didn't submit
+        winnerUserId = game.guest;
         game.guestPenniesScore += 1;
-      } else if (timedOutPlayerId === guestId) {
+      } else if (!guestChoice) {
         // Guest timed out - host wins (same choice rule)
         winner = 'host';
-        guestChoice = null; // Guest didn't submit
+        winnerUserId = game.host;
         game.hostPenniesScore += 1;
+      } else {
+        // Both submitted (shouldn't reach here due to check above)
+        state.timeoutProcessed = false;
+        return;
       }
 
       game.rounds.push({
@@ -995,14 +1031,19 @@ const initGameSocket = (io) => {
           { player: game.host, choice: hostChoice || 'timeout' },
           { player: game.guest, choice: guestChoice || 'timeout' },
         ],
-        winner: winner === 'host' ? game.host : game.guest,
-        summary: `${winner === 'host' ? game.host.studentName || game.host.username : game.guest.studentName || game.guest.username} wins - opponent ran out of time.`,
+        winner: winnerUserId,
+        summary: winner === 'draw' 
+          ? 'Both players ran out of time - draw!'
+          : `${winner === 'host' ? game.host.studentName || game.host.username : game.guest.studentName || game.guest.username} wins - opponent ran out of time.`,
       });
 
       state.roundNumber += 1;
       game.penniesRoundNumber = state.roundNumber;
 
-      const isGameComplete = game.hostPenniesScore >= 10 || game.guestPenniesScore >= 10;
+      // Count MATCHING_PENNIES rounds to check if game is complete (30 rounds total)
+      const penniesRoundsCount = game.rounds.filter(r => r.gameType === 'MATCHING_PENNIES').length;
+      const isGameComplete = penniesRoundsCount >= 30;
+      
       if (isGameComplete) {
         game.status = 'COMPLETE';
         game.completedAt = new Date();
@@ -1013,9 +1054,31 @@ const initGameSocket = (io) => {
         await game.save();
       }
 
+      // Determine winner based on scores after 30 rounds
+      let finalWinner = null;
+      if (isGameComplete) {
+        if (game.hostPenniesScore > game.guestPenniesScore) {
+          finalWinner = 'host';
+        } else if (game.guestPenniesScore > game.hostPenniesScore) {
+          finalWinner = 'guest';
+        } else {
+          finalWinner = null; // Draw
+        }
+      }
+
+      // Determine which player(s) timed out for the payload
+      let timedOutPlayer = 'both';
+      if (!hostChoice && guestChoice) {
+        timedOutPlayer = 'host';
+      } else if (hostChoice && !guestChoice) {
+        timedOutPlayer = 'guest';
+      } else if (!hostChoice && !guestChoice) {
+        timedOutPlayer = 'both';
+      }
+
       const resultPayload = {
         code: upper,
-        winner: isGameComplete ? (game.hostPenniesScore >= 10 ? 'host' : 'guest') : winner,
+        winner: isGameComplete ? finalWinner : winner,
         hostChoice: hostChoice || 'timeout',
         guestChoice: guestChoice || 'timeout',
         hostWon: winner === 'host',
@@ -1024,7 +1087,9 @@ const initGameSocket = (io) => {
         roundNumber: state.roundNumber - 1,
         isGameComplete,
         timeout: true,
-        timedOutPlayer: timedOutPlayerId === hostId ? 'host' : 'guest',
+        timedOutPlayer,
+        roundsPlayed: penniesRoundsCount,
+        totalRounds: 30,
       };
 
       io.to(upper).emit('penniesResult', resultPayload);
@@ -1037,8 +1102,46 @@ const initGameSocket = (io) => {
       
       // Clear choices for next round
       state.choices = {};
+      state.timeoutProcessed = false;
       activeMatches.set(`pennies_${upper}`, state);
       timeoutTimers.delete(`pennies_${upper}`);
+      
+      // If game continues, set up timeout timers for next round
+      if (!isGameComplete && game.penniesTimePerMove && game.penniesTimePerMove > 0) {
+        const timePerMove = game.penniesTimePerMove * 1000;
+        
+        // Store round start time
+        const roundStartTime = Date.now();
+        let timeRemaining = game.penniesTimePerMove;
+        
+        // Send initial timer update
+        io.to(upper).emit('penniesTimerUpdate', {
+          timeRemaining,
+          roundStartTime,
+        });
+        
+        // Send periodic timer updates every second
+        const intervalTimer = setInterval(() => {
+          const elapsed = Math.floor((Date.now() - roundStartTime) / 1000);
+          timeRemaining = Math.max(0, game.penniesTimePerMove - elapsed);
+          
+          io.to(upper).emit('penniesTimerUpdate', {
+            timeRemaining,
+            roundStartTime,
+          });
+          
+          if (timeRemaining <= 0) {
+            clearInterval(intervalTimer);
+          }
+        }, 1000);
+        
+        const timeoutData = {
+          hostTimer: setTimeout(() => handlePenniesTimeout(upper, hostId), timePerMove),
+          guestTimer: setTimeout(() => handlePenniesTimeout(upper, guestId), timePerMove),
+          intervalTimer,
+        };
+        timeoutTimers.set(`pennies_${upper}`, timeoutData);
+      }
     };
 
     // Start round - set up timeout timers for RPS and Matching Pennies
@@ -1145,7 +1248,7 @@ const initGameSocket = (io) => {
         
         // Initialize state for the round
         if (!activeMatches.has(`pennies_${upper}`)) {
-          activeMatches.set(`pennies_${upper}`, { choices: {}, roundNumber: game.penniesRoundNumber || 0 });
+          activeMatches.set(`pennies_${upper}`, { choices: {}, roundNumber: game.penniesRoundNumber || 0, timeoutProcessed: false });
         }
       }
     });
