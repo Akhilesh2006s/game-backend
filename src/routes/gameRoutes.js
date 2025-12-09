@@ -506,6 +506,7 @@ router.post('/start-pennies', authGuard, async (req, res) => {
         },
         status: game.status,
         activeStage: game.activeStage,
+        penniesTimePerMove: game.penniesTimePerMove,
         createdAt: game.createdAt,
         updatedAt: game.updatedAt,
       };
@@ -513,6 +514,10 @@ router.post('/start-pennies', authGuard, async (req, res) => {
         game: gameData,
         gameType: 'MATCHING_PENNIES',
       });
+      
+      // Auto-start timer for first round if time per move is set
+      // The timer will be initialized by the client emitting startRound, or we can trigger it here
+      // For now, clients will auto-trigger startRound when they receive game:started
     }
 
     res.json({ game });
