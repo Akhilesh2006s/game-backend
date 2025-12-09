@@ -224,8 +224,9 @@ router.get('/stats', authGuard, async (req, res) => {
 router.get('/code/:code', authGuard, async (req, res) => {
   try {
     const game = await Game.findOne({ code: req.params.code })
-      .populate('host', 'username studentName avatarColor')
-      .populate('guest', 'username studentName avatarColor');
+      .populate('host', 'username studentName avatarColor email')
+      .populate('guest', 'username studentName avatarColor email')
+      .select('code host guest status activeStage createdAt updatedAt rpsTimePerMove penniesTimePerMove goBoardSize goTimeControl pendingGameSettings goKomi hostScore guestScore hostPenniesScore guestPenniesScore');
     if (!game) {
       return res.status(404).json({ message: 'Game not found' });
     }
