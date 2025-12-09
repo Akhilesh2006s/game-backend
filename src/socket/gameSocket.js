@@ -703,6 +703,16 @@ const initGameSocket = (io) => {
         }
       }
 
+      // Determine which player(s) timed out for the payload
+      let timedOutPlayer = 'both';
+      if (!hostMove && guestMove) {
+        timedOutPlayer = 'host';
+      } else if (hostMove && !guestMove) {
+        timedOutPlayer = 'guest';
+      } else if (!hostMove && !guestMove) {
+        timedOutPlayer = 'both';
+      }
+
       const resultPayload = {
         code: upper,
         result: winner,
@@ -714,7 +724,7 @@ const initGameSocket = (io) => {
         winner: finalWinner,
         nextStage: isGameComplete ? null : 'ROCK_PAPER_SCISSORS',
         timeout: true,
-        timedOutPlayer: hostTimedOut ? 'host' : guestTimedOut ? 'guest' : 'both',
+        timedOutPlayer,
         roundsPlayed: rpsRoundsCount,
         totalRounds: 30,
       };
