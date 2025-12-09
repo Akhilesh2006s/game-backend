@@ -811,10 +811,37 @@ const initGameSocket = (io) => {
 
       // If game continues, set up timeout timers for next round
       if (!isGameComplete && game.penniesTimePerMove && game.penniesTimePerMove > 0) {
-        const timePerMove = game.penniesTimePerMove * 1000; // Convert to milliseconds
+        const timePerMove = game.penniesTimePerMove * 1000;
+        
+        // Store round start time
+        const roundStartTime = Date.now();
+        let timeRemaining = game.penniesTimePerMove;
+        
+        // Send initial timer update
+        io.to(upper).emit('penniesTimerUpdate', {
+          timeRemaining,
+          roundStartTime,
+        });
+        
+        // Send periodic timer updates every second
+        const intervalTimer = setInterval(() => {
+          const elapsed = Math.floor((Date.now() - roundStartTime) / 1000);
+          timeRemaining = Math.max(0, game.penniesTimePerMove - elapsed);
+          
+          io.to(upper).emit('penniesTimerUpdate', {
+            timeRemaining,
+            roundStartTime,
+          });
+          
+          if (timeRemaining <= 0) {
+            clearInterval(intervalTimer);
+          }
+        }, 1000);
+        
         const timeoutData = {
           hostTimer: setTimeout(() => handlePenniesTimeout(upper, hostId), timePerMove),
           guestTimer: setTimeout(() => handlePenniesTimeout(upper, guestId), timePerMove),
+          intervalTimer,
         };
         timeoutTimers.set(`pennies_${upper}`, timeoutData);
       }
@@ -828,6 +855,12 @@ const initGameSocket = (io) => {
 
       const state = activeMatches.get(`pennies_${upper}`);
       if (!state) return;
+
+      // Clear timer interval
+      const timeoutData = timeoutTimers.get(`pennies_${upper}`);
+      if (timeoutData && timeoutData.intervalTimer) {
+        clearInterval(timeoutData.intervalTimer);
+      }
 
       // If player already submitted, ignore timeout
       if (state.choices[timedOutPlayerId]) return;
@@ -891,6 +924,12 @@ const initGameSocket = (io) => {
       };
 
       io.to(upper).emit('penniesResult', resultPayload);
+      
+      // Clear timer interval
+      const penniesTimerData = timeoutTimers.get(`pennies_${upper}`);
+      if (penniesTimerData && penniesTimerData.intervalTimer) {
+        clearInterval(penniesTimerData.intervalTimer);
+      }
       
       // Clear choices for next round
       state.choices = {};
@@ -965,11 +1004,38 @@ const initGameSocket = (io) => {
         if (existing) {
           if (existing.hostTimer) clearTimeout(existing.hostTimer);
           if (existing.guestTimer) clearTimeout(existing.guestTimer);
+          if (existing.intervalTimer) clearInterval(existing.intervalTimer);
         }
+        
+        // Store round start time
+        const roundStartTime = Date.now();
+        let timeRemaining = game.penniesTimePerMove;
+        
+        // Send initial timer update
+        io.to(upper).emit('penniesTimerUpdate', {
+          timeRemaining,
+          roundStartTime,
+        });
+        
+        // Send periodic timer updates every second
+        const intervalTimer = setInterval(() => {
+          const elapsed = Math.floor((Date.now() - roundStartTime) / 1000);
+          timeRemaining = Math.max(0, game.penniesTimePerMove - elapsed);
+          
+          io.to(upper).emit('penniesTimerUpdate', {
+            timeRemaining,
+            roundStartTime,
+          });
+          
+          if (timeRemaining <= 0) {
+            clearInterval(intervalTimer);
+          }
+        }, 1000);
         
         const timeoutData = {
           hostTimer: setTimeout(() => handlePenniesTimeout(upper, hostId), timePerMove),
           guestTimer: setTimeout(() => handlePenniesTimeout(upper, guestId), timePerMove),
+          intervalTimer,
         };
         timeoutTimers.set(`pennies_${upper}`, timeoutData);
         
