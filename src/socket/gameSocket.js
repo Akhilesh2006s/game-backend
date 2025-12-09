@@ -2050,6 +2050,40 @@ const initGameSocket = (io) => {
         newCode: newGame.code,
         game: newGame,
       });
+      
+      // For Matching Pennies and RPS, emit game:started to auto-start timer
+      if (newGame.activeStage === 'MATCHING_PENNIES' || newGame.activeStage === 'ROCK_PAPER_SCISSORS') {
+        const gameData = {
+          _id: newGame._id,
+          code: newGame.code,
+          host: {
+            _id: newGame.host._id,
+            username: newGame.host.username,
+            studentName: newGame.host.studentName,
+            avatarColor: newGame.host.avatarColor,
+          },
+          guest: {
+            _id: newGame.guest._id,
+            username: newGame.guest.username,
+            studentName: newGame.guest.studentName,
+            avatarColor: newGame.guest.avatarColor,
+          },
+          status: newGame.status,
+          activeStage: newGame.activeStage,
+          penniesTimePerMove: newGame.penniesTimePerMove,
+          rpsTimePerMove: newGame.rpsTimePerMove,
+          createdAt: newGame.createdAt,
+          updatedAt: newGame.updatedAt,
+        };
+        
+        // Wait a bit for clients to join the new room, then emit game:started
+        setTimeout(() => {
+          io.to(newGame.code.toUpperCase()).emit('game:started', {
+            game: gameData,
+            gameType: newGame.activeStage === 'MATCHING_PENNIES' ? 'MATCHING_PENNIES' : 'ROCK_PAPER_SCISSORS',
+          });
+        }, 500);
+      }
     });
 
     // Rematch reject handler
