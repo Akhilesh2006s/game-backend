@@ -1966,6 +1966,17 @@ const initGameSocket = (io) => {
         return;
       }
 
+      // Clear any old timer state for the previous game code
+      const oldPenniesTimer = timeoutTimers.get(`pennies_${upper}`);
+      if (oldPenniesTimer) {
+        if (oldPenniesTimer.hostTimer) clearTimeout(oldPenniesTimer.hostTimer);
+        if (oldPenniesTimer.guestTimer) clearTimeout(oldPenniesTimer.guestTimer);
+        if (oldPenniesTimer.intervalTimer) clearInterval(oldPenniesTimer.intervalTimer);
+        timeoutTimers.delete(`pennies_${upper}`);
+      }
+      // Clear old active match state
+      activeMatches.delete(`pennies_${upper}`);
+      
       // Create new game with same players and settings
       const GameModel = require('../models/Game');
       const generateMatchCode = require('../utils/generateMatchCode');
