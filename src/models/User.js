@@ -35,6 +35,14 @@ const userSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    rpsUnlocked: {
+      type: Boolean,
+      default: false,
+    },
+    penniesUnlocked: {
+      type: Boolean,
+      default: false,
+    },
     gameStats: {
       totalGames: { type: Number, default: 0 },
       wins: { type: Number, default: 0 },

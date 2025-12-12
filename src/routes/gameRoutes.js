@@ -453,6 +453,11 @@ router.post('/start-pennies', authGuard, async (req, res) => {
       return res.status(403).json({ message: 'Admin users cannot start games' });
     }
 
+    // Check if user has Matching Pennies unlocked
+    if (!user || !user.penniesUnlocked) {
+      return res.status(403).json({ message: 'Matching Pennies is locked. Please contact an admin to unlock it.' });
+    }
+
     const { code } = req.body;
     const game = await Game.findOne({ code });
     if (!game) {
@@ -633,6 +638,11 @@ router.post('/start-rps', authGuard, async (req, res) => {
     const user = await User.findById(req.user.id);
     if (user && user.role === 'admin') {
       return res.status(403).json({ message: 'Admin users cannot start games' });
+    }
+
+    // Check if user has Rock Paper Scissors unlocked
+    if (!user || !user.rpsUnlocked) {
+      return res.status(403).json({ message: 'Rock Paper Scissors is locked. Please contact an admin to unlock it.' });
     }
 
     const { code } = req.body;

@@ -21,7 +21,7 @@ router.get('/leaderboard', adminAuth, async (req, res) => {
     
     // Get all users who are students (not admin)
     let users = await User.find({ role: { $ne: 'admin' } })
-      .select('username studentName email gameStats goUnlocked')
+      .select('username studentName email gameStats goUnlocked rpsUnlocked penniesUnlocked')
       .lean();
     
     // Filter users to only those with emails in Student collection
@@ -40,6 +40,8 @@ router.get('/leaderboard', adminAuth, async (req, res) => {
         firstName: student?.firstName || user.studentName || user.username,
         lastName: student?.lastName || '',
         goUnlocked: user.goUnlocked || false,
+        rpsUnlocked: user.rpsUnlocked || false,
+        penniesUnlocked: user.penniesUnlocked || false,
         stats: user.gameStats || {
           totalGames: 0,
           wins: 0,
@@ -286,11 +288,15 @@ router.get('/student/:email', adminAuth, async (req, res) => {
   }
 });
 
-// Unlock/Lock Game of Go for a user
-router.put('/user/:userId/go-unlock', adminAuth, async (req, res) => {
+// Unlock/Lock games for a user
+router.put('/user/:userId/game-unlock', adminAuth, async (req, res) => {
   try {
     const { userId } = req.params;
-    const { unlocked } = req.body;
+    const { gameType, unlocked } = req.body;
+
+    if (!['go', 'rps', 'pennies'].includes(gameType)) {
+      return res.status(400).json({ message: 'gameType must be one of: go, rps, pennies' });
+    }
 
     if (typeof unlocked !== 'boolean') {
       return res.status(400).json({ message: 'unlocked must be a boolean' });
@@ -301,20 +307,35 @@ router.put('/user/:userId/go-unlock', adminAuth, async (req, res) => {
       return res.status(404).json({ message: 'User not found' });
     }
 
-    user.goUnlocked = unlocked;
+    const gameNames = {
+      go: 'Game of Go',
+      rps: 'Rock Paper Scissors',
+      pennies: 'Matching Pennies'
+    };
+
+    if (gameType === 'go') {
+      user.goUnlocked = unlocked;
+    } else if (gameType === 'rps') {
+      user.rpsUnlocked = unlocked;
+    } else if (gameType === 'pennies') {
+      user.penniesUnlocked = unlocked;
+    }
+
     await user.save();
 
     res.json({
-      message: unlocked ? 'Game of Go unlocked for user' : 'Game of Go locked for user',
+      message: unlocked ? `${gameNames[gameType]} unlocked for user` : `${gameNames[gameType]} locked for user`,
       user: {
         id: user._id,
         email: user.email,
         username: user.username,
         goUnlocked: user.goUnlocked,
+        rpsUnlocked: user.rpsUnlocked,
+        penniesUnlocked: user.penniesUnlocked,
       },
     });
   } catch (err) {
-    console.error('Error updating go unlock status:', err);
+    console.error('Error updating game unlock status:', err);
     res.status(500).json({ message: 'Failed to update unlock status' });
   }
 });

@@ -56,6 +56,8 @@ router.post('/register', async (req, res) => {
         email: user.email,
         avatarColor: user.avatarColor,
         goUnlocked: user.goUnlocked || false,
+        rpsUnlocked: user.rpsUnlocked || false,
+        penniesUnlocked: user.penniesUnlocked || false,
         gameStats: user.gameStats || {},
       },
     });
@@ -83,9 +85,17 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ message: 'Invalid credentials' });
     }
 
-    // Ensure goUnlocked is set (migration for existing users)
+    // Ensure unlock fields are set (migration for existing users)
     if (user.goUnlocked === undefined || user.goUnlocked === null) {
       user.goUnlocked = false;
+    }
+    if (user.rpsUnlocked === undefined || user.rpsUnlocked === null) {
+      user.rpsUnlocked = false;
+    }
+    if (user.penniesUnlocked === undefined || user.penniesUnlocked === null) {
+      user.penniesUnlocked = false;
+    }
+    if (user.isModified()) {
       await user.save();
     }
 
@@ -101,6 +111,8 @@ router.post('/login', async (req, res) => {
           avatarColor: user.avatarColor,
           role: user.role,
           goUnlocked: user.goUnlocked === true,
+          rpsUnlocked: user.rpsUnlocked === true,
+          penniesUnlocked: user.penniesUnlocked === true,
           gameStats: user.gameStats || {},
         },
       });
@@ -140,6 +152,8 @@ router.post('/login', async (req, res) => {
         avatarColor: user.avatarColor,
         role: user.role || 'student',
         goUnlocked: user.goUnlocked === true,
+        rpsUnlocked: user.rpsUnlocked === true,
+        penniesUnlocked: user.penniesUnlocked === true,
         gameStats: user.gameStats || {},
       },
     });
@@ -178,6 +192,8 @@ router.put('/profile', authGuard, async (req, res) => {
         email: user.email,
         avatarColor: user.avatarColor,
         goUnlocked: user.goUnlocked || false,
+        rpsUnlocked: user.rpsUnlocked || false,
+        penniesUnlocked: user.penniesUnlocked || false,
         gameStats: user.gameStats || {},
       },
     });
@@ -210,6 +226,8 @@ router.post('/refresh-name', authGuard, async (req, res) => {
         email: user.email,
         avatarColor: user.avatarColor,
         goUnlocked: user.goUnlocked || false,
+        rpsUnlocked: user.rpsUnlocked || false,
+        penniesUnlocked: user.penniesUnlocked || false,
         gameStats: user.gameStats || {},
       },
     });
