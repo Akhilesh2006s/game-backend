@@ -340,10 +340,10 @@ router.put('/user/:userId/game-unlock', adminAuth, async (req, res) => {
   }
 });
 
-// Unlock RPS and Pennies for all users matching filters
+// Unlock/Lock RPS and Pennies for all users matching filters
 router.post('/unlock-all-rps-pennies', adminAuth, async (req, res) => {
   try {
-    const { groupId, classroomNumber, teamNumber, search } = req.body;
+    const { groupId, classroomNumber, teamNumber, search, unlock = true } = req.body;
     
     // Get all students
     const students = await Student.find({}).lean();
@@ -397,11 +397,13 @@ router.post('/unlock-all-rps-pennies', adminAuth, async (req, res) => {
     const userIds = filteredUsers.map(item => item.user._id);
     const result = await User.updateMany(
       { _id: { $in: userIds } },
-      { $set: { rpsUnlocked: true, penniesUnlocked: true } }
+      { $set: { rpsUnlocked: unlock, penniesUnlocked: unlock } }
     );
     
     res.json({
-      message: `Unlocked RPS and Matching Pennies for ${result.modifiedCount} user(s)`,
+      message: unlock 
+        ? `Unlocked RPS and Matching Pennies for ${result.modifiedCount} user(s)`
+        : `Locked RPS and Matching Pennies for ${result.modifiedCount} user(s)`,
       count: result.modifiedCount,
     });
   } catch (err) {
