@@ -244,7 +244,7 @@ router.get('/search', authGuard, async (req, res) => {
     const hasQuery = searchQuery && searchQuery.trim().length > 0;
     const searchLower = hasQuery ? searchQuery.trim().toLowerCase() : '';
 
-    // Get all available games (waiting for players) or search by code
+    // Get all available games (waiting for players) or search by code, enrollment, or name
     // Only show games created in the last 30 minutes (indicating player is likely still online)
     const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
     let gamesQuery = {
@@ -253,8 +253,85 @@ router.get('/search', authGuard, async (req, res) => {
       createdAt: { $gte: thirtyMinutesAgo }, // Only recently created games (last 30 minutes)
     };
     
-    if (hasQuery && (type === 'all' || type === 'code' || !type)) {
+    // If searching by enrollment or name, we need to find matching users first
+    let matchingHostIds = null;
+    if (hasQuery && (type === 'enrollment' || type === 'name')) {
+      // Find matching students first
+      const studentQuery = {
+        $or: [
+          { enrollmentNo: { $regex: searchLower, $options: 'i' } },
+          { firstName: { $regex: searchLower, $options: 'i' } },
+          { lastName: { $regex: searchLower, $options: 'i' } },
+          { email: { $regex: searchLower, $options: 'i' } },
+        ],
+      };
+      
+      const matchingStudents = await Student.find(studentQuery)
+        .select('email')
+        .lean();
+      
+      if (matchingStudents.length > 0) {
+        const matchingEmails = matchingStudents.map(s => s.email.toLowerCase());
+        const matchingUsers = await User.find({
+          email: { $in: matchingEmails },
+          role: { $ne: 'admin' }
+        })
+          .select('_id')
+          .lean();
+        
+        matchingHostIds = matchingUsers.map(u => u._id);
+        
+        // If no matching users found, return empty results
+        if (matchingHostIds.length === 0) {
+          return res.json({ players: [], games: [] });
+        }
+        
+        // Filter games by matching host IDs
+        gamesQuery.host = { $in: matchingHostIds };
+      } else {
+        // No matching students found, return empty results
+        return res.json({ players: [], games: [] });
+      }
+    } else if (hasQuery && type === 'code') {
+      // Search by code only
       gamesQuery.code = { $regex: searchLower, $options: 'i' };
+    } else if (hasQuery && (type === 'all' || !type)) {
+      // Search by code OR enrollment/name (combine both)
+      const studentQuery = {
+        $or: [
+          { enrollmentNo: { $regex: searchLower, $options: 'i' } },
+          { firstName: { $regex: searchLower, $options: 'i' } },
+          { lastName: { $regex: searchLower, $options: 'i' } },
+          { email: { $regex: searchLower, $options: 'i' } },
+        ],
+      };
+      
+      const matchingStudents = await Student.find(studentQuery)
+        .select('email')
+        .lean();
+      
+      if (matchingStudents.length > 0) {
+        const matchingEmails = matchingStudents.map(s => s.email.toLowerCase());
+        const matchingUsers = await User.find({
+          email: { $in: matchingEmails },
+          role: { $ne: 'admin' }
+        })
+          .select('_id')
+          .lean();
+        
+        matchingHostIds = matchingUsers.map(u => u._id);
+      }
+      
+      // Build query to search by code OR host ID
+      if (matchingHostIds && matchingHostIds.length > 0) {
+        gamesQuery.$or = [
+          { code: { $regex: searchLower, $options: 'i' } },
+          { host: { $in: matchingHostIds } }
+        ];
+      } else {
+        // Only search by code if no matching users found
+        gamesQuery.code = { $regex: searchLower, $options: 'i' };
+      }
     }
     
     const gamesByCode = await Game.find(gamesQuery)
