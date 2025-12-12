@@ -9,20 +9,30 @@ const createAdmin = async () => {
     await connectDB(process.env.MONGO_URI);
     console.log('Connected to database');
 
-    const adminEmail = 'gameamenity@bennett.edu.in'.toLowerCase().trim();
-    const adminPassword = 'Amenity';
+    // Remove old admin user
+    const oldAdminEmail = 'gameamenity@bennett.edu.in'.toLowerCase().trim();
+    const oldAdmin = await User.findOne({ email: oldAdminEmail });
+    if (oldAdmin && oldAdmin.role === 'admin') {
+      await User.deleteOne({ _id: oldAdmin._id });
+      console.log('Old admin user removed:', oldAdminEmail);
+    }
+
+    // Create new admin user
+    const adminEmail = 'GGL@bennett.edu.in'.toLowerCase().trim();
+    const adminPassword = '12345678';
     const adminUsername = 'Admin';
 
-    // Check if admin already exists
+    // Check if new admin already exists
     const existing = await User.findOne({ email: adminEmail });
     if (existing) {
       if (existing.role === 'admin') {
-        console.log('Admin user already exists');
-        // Update password in case it changed
+        console.log('Admin user already exists, updating password...');
+        // Update password
         const passwordHash = await bcrypt.hash(adminPassword, 10);
         existing.passwordHash = passwordHash;
         existing.username = adminUsername;
         existing.role = 'admin';
+        existing.studentName = 'Admin';
         await existing.save();
         console.log('Admin user updated');
       } else {
@@ -31,6 +41,7 @@ const createAdmin = async () => {
         existing.passwordHash = passwordHash;
         existing.username = adminUsername;
         existing.role = 'admin';
+        existing.studentName = 'Admin';
         await existing.save();
         console.log('User converted to admin');
       }

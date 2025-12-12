@@ -21,7 +21,7 @@ router.get('/leaderboard', adminAuth, async (req, res) => {
     
     // Get all users who are students (not admin)
     let users = await User.find({ role: { $ne: 'admin' } })
-      .select('username studentName email gameStats')
+      .select('username studentName email gameStats goUnlocked')
       .lean();
     
     // Filter users to only those with emails in Student collection
@@ -282,6 +282,54 @@ router.get('/student/:email', adminAuth, async (req, res) => {
   } catch (err) {
     console.error('Error fetching student stats:', err);
     res.status(500).json({ message: 'Failed to load student stats' });
+  }
+});
+
+// Unlock Game of Go for selected students
+router.post('/unlock-go', adminAuth, async (req, res) => {
+  try {
+    const { studentEmails } = req.body;
+    
+    if (!Array.isArray(studentEmails) || studentEmails.length === 0) {
+      return res.status(400).json({ message: 'Please provide an array of student emails' });
+    }
+    
+    const result = await User.updateMany(
+      { email: { $in: studentEmails.map(e => e.toLowerCase()) }, role: { $ne: 'admin' } },
+      { $set: { goUnlocked: true } }
+    );
+    
+    res.json({ 
+      message: `Game of Go unlocked for ${result.modifiedCount} student(s)`,
+      modifiedCount: result.modifiedCount
+    });
+  } catch (err) {
+    console.error('Error unlocking Game of Go:', err);
+    res.status(500).json({ message: 'Failed to unlock Game of Go' });
+  }
+});
+
+// Lock Game of Go for selected students
+router.post('/lock-go', adminAuth, async (req, res) => {
+  try {
+    const { studentEmails } = req.body;
+    
+    if (!Array.isArray(studentEmails) || studentEmails.length === 0) {
+      return res.status(400).json({ message: 'Please provide an array of student emails' });
+    }
+    
+    const result = await User.updateMany(
+      { email: { $in: studentEmails.map(e => e.toLowerCase()) }, role: { $ne: 'admin' } },
+      { $set: { goUnlocked: false } }
+    );
+    
+    res.json({ 
+      message: `Game of Go locked for ${result.modifiedCount} student(s)`,
+      modifiedCount: result.modifiedCount
+    });
+  } catch (err) {
+    console.error('Error locking Game of Go:', err);
+    res.status(500).json({ message: 'Failed to lock Game of Go' });
   }
 });
 

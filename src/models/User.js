@@ -31,6 +31,10 @@ const userSchema = new mongoose.Schema(
       enum: ['student', 'admin'],
       default: 'student',
     },
+    goUnlocked: {
+      type: Boolean,
+      default: false,
+    },
     gameStats: {
       totalGames: { type: Number, default: 0 },
       wins: { type: Number, default: 0 },
