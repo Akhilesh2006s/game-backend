@@ -724,9 +724,9 @@ router.post('/start-go', authGuard, async (req, res) => {
       return res.status(403).json({ message: 'Admin users cannot start games' });
     }
 
-    // Check if Game of Go is unlocked for the user
-    if (user && user.role === 'student' && !user.goUnlocked) {
-      return res.status(403).json({ message: 'Game of Go is locked. Please contact an administrator to unlock it.' });
+    // Check if user has Game of Go unlocked
+    if (!user || !user.goUnlocked) {
+      return res.status(403).json({ message: 'Game of Go is locked. Please contact an admin to unlock it.' });
     }
 
     const { code, boardSize, komi, timeControl } = req.body;

@@ -55,6 +55,7 @@ router.post('/register', async (req, res) => {
         studentName: user.studentName || user.username,
         email: user.email,
         avatarColor: user.avatarColor,
+        goUnlocked: user.goUnlocked || false,
         gameStats: user.gameStats || {},
       },
     });
@@ -93,8 +94,8 @@ router.post('/login', async (req, res) => {
           email: user.email,
           avatarColor: user.avatarColor,
           role: user.role,
-          gameStats: user.gameStats || {},
           goUnlocked: user.goUnlocked || false,
+          gameStats: user.gameStats || {},
         },
       });
     }
@@ -124,8 +125,8 @@ router.post('/login', async (req, res) => {
         email: user.email,
         avatarColor: user.avatarColor,
         role: user.role || 'student',
-        gameStats: user.gameStats || {},
         goUnlocked: user.goUnlocked || false,
+        gameStats: user.gameStats || {},
       },
     });
   } catch (err) {
@@ -162,6 +163,7 @@ router.put('/profile', authGuard, async (req, res) => {
         studentName: user.studentName || user.username,
         email: user.email,
         avatarColor: user.avatarColor,
+        goUnlocked: user.goUnlocked || false,
         gameStats: user.gameStats || {},
       },
     });
@@ -193,6 +195,7 @@ router.post('/refresh-name', authGuard, async (req, res) => {
         studentName: user.studentName || user.username,
         email: user.email,
         avatarColor: user.avatarColor,
+        goUnlocked: user.goUnlocked || false,
         gameStats: user.gameStats || {},
       },
     });

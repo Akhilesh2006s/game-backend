@@ -39,6 +39,7 @@ router.get('/leaderboard', adminAuth, async (req, res) => {
         teamNumber: student?.teamNumber || '',
         firstName: student?.firstName || user.studentName || user.username,
         lastName: student?.lastName || '',
+        goUnlocked: user.goUnlocked || false,
         stats: user.gameStats || {
           totalGames: 0,
           wins: 0,
@@ -285,51 +286,36 @@ router.get('/student/:email', adminAuth, async (req, res) => {
   }
 });
 
-// Unlock Game of Go for selected students
-router.post('/unlock-go', adminAuth, async (req, res) => {
+// Unlock/Lock Game of Go for a user
+router.put('/user/:userId/go-unlock', adminAuth, async (req, res) => {
   try {
-    const { studentEmails } = req.body;
-    
-    if (!Array.isArray(studentEmails) || studentEmails.length === 0) {
-      return res.status(400).json({ message: 'Please provide an array of student emails' });
-    }
-    
-    const result = await User.updateMany(
-      { email: { $in: studentEmails.map(e => e.toLowerCase()) }, role: { $ne: 'admin' } },
-      { $set: { goUnlocked: true } }
-    );
-    
-    res.json({ 
-      message: `Game of Go unlocked for ${result.modifiedCount} student(s)`,
-      modifiedCount: result.modifiedCount
-    });
-  } catch (err) {
-    console.error('Error unlocking Game of Go:', err);
-    res.status(500).json({ message: 'Failed to unlock Game of Go' });
-  }
-});
+    const { userId } = req.params;
+    const { unlocked } = req.body;
 
-// Lock Game of Go for selected students
-router.post('/lock-go', adminAuth, async (req, res) => {
-  try {
-    const { studentEmails } = req.body;
-    
-    if (!Array.isArray(studentEmails) || studentEmails.length === 0) {
-      return res.status(400).json({ message: 'Please provide an array of student emails' });
+    if (typeof unlocked !== 'boolean') {
+      return res.status(400).json({ message: 'unlocked must be a boolean' });
     }
-    
-    const result = await User.updateMany(
-      { email: { $in: studentEmails.map(e => e.toLowerCase()) }, role: { $ne: 'admin' } },
-      { $set: { goUnlocked: false } }
-    );
-    
-    res.json({ 
-      message: `Game of Go locked for ${result.modifiedCount} student(s)`,
-      modifiedCount: result.modifiedCount
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    user.goUnlocked = unlocked;
+    await user.save();
+
+    res.json({
+      message: unlocked ? 'Game of Go unlocked for user' : 'Game of Go locked for user',
+      user: {
+        id: user._id,
+        email: user.email,
+        username: user.username,
+        goUnlocked: user.goUnlocked,
+      },
     });
   } catch (err) {
-    console.error('Error locking Game of Go:', err);
-    res.status(500).json({ message: 'Failed to lock Game of Go' });
+    console.error('Error updating go unlock status:', err);
+    res.status(500).json({ message: 'Failed to update unlock status' });
   }
 });
 
