@@ -340,5 +340,75 @@ router.put('/user/:userId/game-unlock', adminAuth, async (req, res) => {
   }
 });
 
+// Unlock RPS and Pennies for all users matching filters
+router.post('/unlock-all-rps-pennies', adminAuth, async (req, res) => {
+  try {
+    const { groupId, classroomNumber, teamNumber, search } = req.body;
+    
+    // Get all students
+    const students = await Student.find({}).lean();
+    
+    // Get all users who are students (not admin)
+    let users = await User.find({ role: { $ne: 'admin' } })
+      .select('username studentName email rpsUnlocked penniesUnlocked')
+      .lean();
+    
+    // Filter users to only those with emails in Student collection
+    const studentEmails = new Set(students.map(s => s.email.toLowerCase()));
+    users = users.filter(u => studentEmails.has(u.email.toLowerCase()));
+    
+    // Map users with student data
+    let filteredUsers = users.map(user => {
+      const student = students.find(s => s.email.toLowerCase() === user.email.toLowerCase());
+      return {
+        user,
+        student,
+        enrollmentNo: student?.enrollmentNo || '',
+        groupId: student?.groupId || '',
+        classroomNumber: student?.classroomNumber || '',
+        teamNumber: student?.teamNumber || '',
+        firstName: student?.firstName || user.studentName || user.username,
+        lastName: student?.lastName || '',
+      };
+    });
+    
+    // Apply filters
+    if (groupId && groupId !== 'all') {
+      filteredUsers = filteredUsers.filter(item => item.groupId === groupId);
+    }
+    if (classroomNumber && classroomNumber !== 'all') {
+      filteredUsers = filteredUsers.filter(item => item.classroomNumber === classroomNumber);
+    }
+    if (teamNumber && teamNumber !== 'all') {
+      filteredUsers = filteredUsers.filter(item => item.teamNumber === teamNumber);
+    }
+    if (search) {
+      const searchLower = search.toLowerCase();
+      filteredUsers = filteredUsers.filter(item => 
+        item.firstName?.toLowerCase().includes(searchLower) ||
+        item.lastName?.toLowerCase().includes(searchLower) ||
+        item.user.email?.toLowerCase().includes(searchLower) ||
+        item.enrollmentNo?.toLowerCase().includes(searchLower) ||
+        item.user.username?.toLowerCase().includes(searchLower)
+      );
+    }
+    
+    // Update all filtered users
+    const userIds = filteredUsers.map(item => item.user._id);
+    const result = await User.updateMany(
+      { _id: { $in: userIds } },
+      { $set: { rpsUnlocked: true, penniesUnlocked: true } }
+    );
+    
+    res.json({
+      message: `Unlocked RPS and Matching Pennies for ${result.modifiedCount} user(s)`,
+      count: result.modifiedCount,
+    });
+  } catch (err) {
+    console.error('Error unlocking games for all users:', err);
+    res.status(500).json({ message: 'Failed to unlock games' });
+  }
+});
+
 module.exports = router;
 
