@@ -412,5 +412,43 @@ router.post('/unlock-all-rps-pennies', adminAuth, async (req, res) => {
   }
 });
 
+// Bulk unlock/lock games for selected users
+router.post('/bulk-game-unlock', adminAuth, async (req, res) => {
+  try {
+    const { userIds, gameType, unlock = true } = req.body;
+
+    if (!Array.isArray(userIds) || userIds.length === 0) {
+      return res.status(400).json({ message: 'userIds must be a non-empty array' });
+    }
+
+    if (!['go', 'rps', 'pennies'].includes(gameType)) {
+      return res.status(400).json({ message: 'gameType must be one of: go, rps, pennies' });
+    }
+
+    const gameNames = {
+      go: 'Game of Go',
+      rps: 'Rock Paper Scissors',
+      pennies: 'Matching Pennies'
+    };
+
+    const updateField = gameType === 'go' ? 'goUnlocked' : gameType === 'rps' ? 'rpsUnlocked' : 'penniesUnlocked';
+    
+    const result = await User.updateMany(
+      { _id: { $in: userIds } },
+      { $set: { [updateField]: unlock } }
+    );
+
+    res.json({
+      message: unlock 
+        ? `Unlocked ${gameNames[gameType]} for ${result.modifiedCount} user(s)`
+        : `Locked ${gameNames[gameType]} for ${result.modifiedCount} user(s)`,
+      count: result.modifiedCount,
+    });
+  } catch (err) {
+    console.error('Error bulk updating game unlock status:', err);
+    res.status(500).json({ message: 'Failed to update unlock status' });
+  }
+});
+
 module.exports = router;
 
