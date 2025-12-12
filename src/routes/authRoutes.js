@@ -83,6 +83,12 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ message: 'Invalid credentials' });
     }
 
+    // Ensure goUnlocked is set (migration for existing users)
+    if (user.goUnlocked === undefined || user.goUnlocked === null) {
+      user.goUnlocked = false;
+      await user.save();
+    }
+
     // Admin users skip student name lookup
     if (user.role === 'admin') {
       return res.json({
@@ -94,7 +100,7 @@ router.post('/login', async (req, res) => {
           email: user.email,
           avatarColor: user.avatarColor,
           role: user.role,
-          goUnlocked: user.goUnlocked || false,
+          goUnlocked: user.goUnlocked === true,
           gameStats: user.gameStats || {},
         },
       });
@@ -109,10 +115,18 @@ router.post('/login', async (req, res) => {
     const student = await Student.findOne({ email: normalizedEmail });
     if (student) {
       user.studentName = student.firstName;
-      await user.save();
     } else if (!user.studentName) {
       // If no student found and no name set, use username
       user.studentName = user.username;
+    }
+    
+    // Ensure goUnlocked is set (migration for existing users)
+    if (user.goUnlocked === undefined || user.goUnlocked === null) {
+      user.goUnlocked = false;
+    }
+    
+    // Save if any changes were made
+    if (user.isModified()) {
       await user.save();
     }
 
@@ -125,7 +139,7 @@ router.post('/login', async (req, res) => {
         email: user.email,
         avatarColor: user.avatarColor,
         role: user.role || 'student',
-        goUnlocked: user.goUnlocked || false,
+        goUnlocked: user.goUnlocked === true,
         gameStats: user.gameStats || {},
       },
     });
