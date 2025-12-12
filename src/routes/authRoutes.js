@@ -94,6 +94,7 @@ router.post('/login', async (req, res) => {
           avatarColor: user.avatarColor,
           role: user.role,
           gameStats: user.gameStats || {},
+          goUnlocked: user.goUnlocked || false,
         },
       });
     }
@@ -124,6 +125,7 @@ router.post('/login', async (req, res) => {
         avatarColor: user.avatarColor,
         role: user.role || 'student',
         gameStats: user.gameStats || {},
+        goUnlocked: user.goUnlocked || false,
       },
     });
   } catch (err) {
