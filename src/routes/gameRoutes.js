@@ -474,7 +474,7 @@ router.post('/start-pennies', authGuard, async (req, res) => {
       }
       game.pendingGameSettings = {
         gameType: 'MATCHING_PENNIES',
-        timePerMove: req.body.timePerMove || 15,
+        timePerMove: req.body.timePerMove || 20,
       };
       await game.save();
       await game.populate('host', 'username studentName avatarColor');
@@ -661,7 +661,7 @@ router.post('/start-rps', authGuard, async (req, res) => {
       }
       game.pendingGameSettings = {
         gameType: 'ROCK_PAPER_SCISSORS',
-        timePerMove: req.body.timePerMove || 15,
+        timePerMove: req.body.timePerMove || 20,
       };
       await game.save();
       await game.populate('host', 'username studentName avatarColor');
