@@ -1,4 +1,6 @@
 const express = require('express');
+const bcrypt = require('bcryptjs');
+const nanoid = require('nanoid');
 const Game = require('../models/Game');
 const User = require('../models/User');
 const Student = require('../models/Student');
@@ -34,7 +36,7 @@ router.get('/leaderboard', adminAuth, async (req, res) => {
     const leaderboard = students.map(student => {
       const user = userMap.get(student.email.toLowerCase());
       
-      // If user exists (has logged in), use their data
+      // If user exists (has logged in or account was created for game unlock), use their data
       if (user) {
         return {
           _id: user._id,
@@ -47,9 +49,9 @@ router.get('/leaderboard', adminAuth, async (req, res) => {
           teamNumber: student.teamNumber || '',
           firstName: student.firstName || user.studentName || user.username || '',
           lastName: student.lastName || '',
-          goUnlocked: user.goUnlocked || false,
-          rpsUnlocked: user.rpsUnlocked || false,
-          penniesUnlocked: user.penniesUnlocked || false,
+          goUnlocked: user.goUnlocked === true,
+          rpsUnlocked: user.rpsUnlocked === true,
+          penniesUnlocked: user.penniesUnlocked === true,
           stats: user.gameStats || {
             totalGames: 0,
             wins: 0,
@@ -330,11 +332,11 @@ router.get('/student/:email', adminAuth, async (req, res) => {
   }
 });
 
-// Unlock/Lock games for a user
+// Unlock/Lock games for a user (by userId or email)
 router.put('/user/:userId/game-unlock', adminAuth, async (req, res) => {
   try {
     const { userId } = req.params;
-    const { gameType, unlocked } = req.body;
+    const { gameType, unlocked, email } = req.body;
 
     if (!['go', 'rps', 'pennies'].includes(gameType)) {
       return res.status(400).json({ message: 'gameType must be one of: go, rps, pennies' });
@@ -344,7 +346,35 @@ router.put('/user/:userId/game-unlock', adminAuth, async (req, res) => {
       return res.status(400).json({ message: 'unlocked must be a boolean' });
     }
 
-    const user = await User.findById(userId);
+    let user = await User.findById(userId);
+    
+    // If user doesn't exist but email is provided, create user account for student who hasn't logged in
+    if (!user && email) {
+      const normalizedEmail = email.toLowerCase().trim();
+      
+      // Check if student exists
+      const student = await Student.findOne({ email: normalizedEmail });
+      if (!student) {
+        return res.status(404).json({ message: 'Student not found' });
+      }
+      
+      // Create a minimal user account (they'll set password when they first log in)
+      // Generate a temporary password hash (they'll need to reset password on first login)
+      const tempPassword = nanoid.nanoid(16); // Temporary random password
+      const passwordHash = await bcrypt.hash(tempPassword, 10);
+      
+      user = await User.create({
+        username: student.firstName || student.email.split('@')[0],
+        email: normalizedEmail,
+        passwordHash: passwordHash, // Temporary - user will need to reset password on first login
+        studentName: student.firstName,
+        role: 'student',
+        goUnlocked: false,
+        rpsUnlocked: false,
+        penniesUnlocked: false,
+      });
+    }
+    
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }
@@ -386,6 +416,8 @@ router.put('/user/:userId/game-unlock', adminAuth, async (req, res) => {
 router.post('/unlock-all-rps-pennies', adminAuth, async (req, res) => {
   try {
     const { groupId, classroomNumber, teamNumber, search, unlock = true } = req.body;
+    const bcrypt = require('bcryptjs');
+    const nanoid = require('nanoid');
     
     // Get all students
     const students = await Student.find({}).lean();
@@ -395,58 +427,85 @@ router.post('/unlock-all-rps-pennies', adminAuth, async (req, res) => {
       .select('username studentName email rpsUnlocked penniesUnlocked')
       .lean();
     
-    // Filter users to only those with emails in Student collection
-    const studentEmails = new Set(students.map(s => s.email.toLowerCase()));
-    users = users.filter(u => studentEmails.has(u.email.toLowerCase()));
+    // Create a map of users by email
+    const userMap = new Map();
+    users.forEach(u => userMap.set(u.email.toLowerCase(), u));
     
-    // Map users with student data
-    let filteredUsers = users.map(user => {
-      const student = students.find(s => s.email.toLowerCase() === user.email.toLowerCase());
+    // Map ALL students (including those who haven't logged in)
+    let filteredStudents = students.map(student => {
+      const user = userMap.get(student.email.toLowerCase());
       return {
         user,
         student,
-        enrollmentNo: student?.enrollmentNo || '',
-        groupId: student?.groupId || '',
-        classroomNumber: student?.classroomNumber || '',
-        teamNumber: student?.teamNumber || '',
-        firstName: student?.firstName || user.studentName || user.username,
-        lastName: student?.lastName || '',
+        enrollmentNo: student.enrollmentNo || '',
+        groupId: student.groupId || '',
+        classroomNumber: student.classroomNumber || '',
+        teamNumber: student.teamNumber || '',
+        firstName: student.firstName || '',
+        lastName: student.lastName || '',
       };
     });
     
     // Apply filters
     if (groupId && groupId !== 'all') {
-      filteredUsers = filteredUsers.filter(item => item.groupId === groupId);
+      filteredStudents = filteredStudents.filter(item => item.groupId === groupId);
     }
     if (classroomNumber && classroomNumber !== 'all') {
-      filteredUsers = filteredUsers.filter(item => item.classroomNumber === classroomNumber);
+      filteredStudents = filteredStudents.filter(item => item.classroomNumber === classroomNumber);
     }
     if (teamNumber && teamNumber !== 'all') {
-      filteredUsers = filteredUsers.filter(item => item.teamNumber === teamNumber);
+      filteredStudents = filteredStudents.filter(item => item.teamNumber === teamNumber);
     }
     if (search) {
       const searchLower = search.toLowerCase();
-      filteredUsers = filteredUsers.filter(item => 
+      filteredStudents = filteredStudents.filter(item => 
         item.firstName?.toLowerCase().includes(searchLower) ||
         item.lastName?.toLowerCase().includes(searchLower) ||
-        item.user.email?.toLowerCase().includes(searchLower) ||
+        item.student.email?.toLowerCase().includes(searchLower) ||
         item.enrollmentNo?.toLowerCase().includes(searchLower) ||
-        item.user.username?.toLowerCase().includes(searchLower)
+        item.user?.username?.toLowerCase().includes(searchLower)
       );
     }
     
-    // Update all filtered users
-    const userIds = filteredUsers.map(item => item.user._id);
-    const result = await User.updateMany(
-      { _id: { $in: userIds } },
-      { $set: { rpsUnlocked: unlock, penniesUnlocked: unlock } }
-    );
+    // Create User accounts for students who don't have one, then update all
+    let createdCount = 0;
+    let updatedCount = 0;
+    
+    for (const item of filteredStudents) {
+      if (!item.user) {
+        // Create user account for student who hasn't logged in
+        const tempPassword = nanoid.nanoid(16);
+        const passwordHash = await bcrypt.hash(tempPassword, 10);
+        
+        const newUser = await User.create({
+          username: item.student.firstName || item.student.email.split('@')[0],
+          email: item.student.email.toLowerCase(),
+          passwordHash: passwordHash,
+          studentName: item.student.firstName,
+          role: 'student',
+          goUnlocked: false,
+          rpsUnlocked: unlock,
+          penniesUnlocked: unlock,
+        });
+        createdCount++;
+        item.user = newUser;
+      } else {
+        // Update existing user
+        await User.updateOne(
+          { _id: item.user._id },
+          { $set: { rpsUnlocked: unlock, penniesUnlocked: unlock } }
+        );
+        updatedCount++;
+      }
+    }
     
     res.json({
       message: unlock 
-        ? `Unlocked RPS and Matching Pennies for ${result.modifiedCount} user(s)`
-        : `Locked RPS and Matching Pennies for ${result.modifiedCount} user(s)`,
-      count: result.modifiedCount,
+        ? `Unlocked RPS and Matching Pennies for ${createdCount + updatedCount} student(s) (${createdCount} new accounts created)`
+        : `Locked RPS and Matching Pennies for ${updatedCount} user(s)`,
+      count: createdCount + updatedCount,
+      created: createdCount,
+      updated: updatedCount,
     });
   } catch (err) {
     console.error('Error unlocking games for all users:', err);
@@ -457,7 +516,7 @@ router.post('/unlock-all-rps-pennies', adminAuth, async (req, res) => {
 // Bulk unlock/lock games for selected users
 router.post('/bulk-game-unlock', adminAuth, async (req, res) => {
   try {
-    const { userIds, gameType, unlock = true } = req.body;
+    const { userIds, gameType, unlock = true, emails } = req.body;
 
     if (!Array.isArray(userIds) || userIds.length === 0) {
       return res.status(400).json({ message: 'userIds must be a non-empty array' });
@@ -475,16 +534,65 @@ router.post('/bulk-game-unlock', adminAuth, async (req, res) => {
 
     const updateField = gameType === 'go' ? 'goUnlocked' : gameType === 'rps' ? 'rpsUnlocked' : 'penniesUnlocked';
     
-    const result = await User.updateMany(
-      { _id: { $in: userIds } },
-      { $set: { [updateField]: unlock } }
-    );
+    // Get valid userIds (filter out null/undefined)
+    const validUserIds = userIds.filter(id => id !== null && id !== undefined);
+    
+    let updatedCount = 0;
+    let createdCount = 0;
+    
+    // Update existing users
+    if (validUserIds.length > 0) {
+      const result = await User.updateMany(
+        { _id: { $in: validUserIds } },
+        { $set: { [updateField]: unlock } }
+      );
+      updatedCount = result.modifiedCount;
+    }
+    
+    // Create accounts for students who haven't logged in (if emails provided)
+    if (emails && Array.isArray(emails) && emails.length > 0) {
+      for (const email of emails) {
+        if (!email) continue;
+        
+        const normalizedEmail = email.toLowerCase().trim();
+        let user = await User.findOne({ email: normalizedEmail });
+        
+        if (!user) {
+          // Check if student exists
+          const student = await Student.findOne({ email: normalizedEmail });
+          if (student) {
+            // Create user account
+            const tempPassword = nanoid.nanoid(16);
+            const passwordHash = await bcrypt.hash(tempPassword, 10);
+            
+            user = await User.create({
+              username: student.firstName || student.email.split('@')[0],
+              email: normalizedEmail,
+              passwordHash: passwordHash,
+              studentName: student.firstName,
+              role: 'student',
+              goUnlocked: gameType === 'go' ? unlock : false,
+              rpsUnlocked: gameType === 'rps' ? unlock : false,
+              penniesUnlocked: gameType === 'pennies' ? unlock : false,
+            });
+            createdCount++;
+          }
+        } else if (!validUserIds.includes(String(user._id))) {
+          // User exists but wasn't in the userIds list (shouldn't happen, but handle it)
+          user[updateField] = unlock;
+          await user.save();
+          updatedCount++;
+        }
+      }
+    }
 
     res.json({
       message: unlock 
-        ? `Unlocked ${gameNames[gameType]} for ${result.modifiedCount} user(s)`
-        : `Locked ${gameNames[gameType]} for ${result.modifiedCount} user(s)`,
-      count: result.modifiedCount,
+        ? `Unlocked ${gameNames[gameType]} for ${updatedCount + createdCount} student(s)${createdCount > 0 ? ` (${createdCount} new accounts created)` : ''}`
+        : `Locked ${gameNames[gameType]} for ${updatedCount} user(s)`,
+      count: updatedCount + createdCount,
+      created: createdCount,
+      updated: updatedCount,
     });
   } catch (err) {
     console.error('Error bulk updating game unlock status:', err);
