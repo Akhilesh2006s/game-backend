@@ -27,6 +27,7 @@ const defaultStringOrigins = [
   'https://games-frontend-92qdx6knh-akhilesh2006s-projects.vercel.app',
   'https://games-frontend-murex.vercel.app',
   'https://games-frontend-vlp4.vercel.app',
+  'https://globalgoleague.com',
   'https://www.globalgoleague.com'
 ];
 
