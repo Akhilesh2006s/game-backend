@@ -521,7 +521,8 @@ const initGameSocket = (io) => {
         game.activeStage = 'ROCK_PAPER_SCISSORS';
         await game.save();
         await updateUserStats(game);
-      } else {
+      } else if (game.status !== 'COMPLETE') {
+        // Only set to IN_PROGRESS if not already COMPLETE (prevent reverting completed games)
         game.status = 'IN_PROGRESS';
         game.activeStage = 'ROCK_PAPER_SCISSORS';
         await game.save();
@@ -685,7 +686,8 @@ const initGameSocket = (io) => {
         game.activeStage = 'ROCK_PAPER_SCISSORS';
         await game.save();
         await updateUserStats(game);
-      } else {
+      } else if (game.status !== 'COMPLETE') {
+        // Only set to IN_PROGRESS if not already COMPLETE (prevent reverting completed games)
         game.status = 'IN_PROGRESS';
         game.activeStage = 'ROCK_PAPER_SCISSORS';
         await game.save();
@@ -889,7 +891,8 @@ const initGameSocket = (io) => {
         game.completedAt = new Date();
         await game.save();
         await updateUserStats(game);
-      } else {
+      } else if (game.status !== 'COMPLETE') {
+        // Only set to IN_PROGRESS if not already COMPLETE (prevent reverting completed games)
         game.status = 'IN_PROGRESS';
         await game.save();
       }
@@ -1049,7 +1052,8 @@ const initGameSocket = (io) => {
         game.completedAt = new Date();
         await game.save();
         await updateUserStats(game);
-      } else {
+      } else if (game.status !== 'COMPLETE') {
+        // Only set to IN_PROGRESS if not already COMPLETE (prevent reverting completed games)
         game.status = 'IN_PROGRESS';
         await game.save();
       }
@@ -1407,7 +1411,10 @@ const initGameSocket = (io) => {
 
       // Switch turn
       game.goCurrentTurn = color === 'black' ? 'white' : 'black';
-      game.status = 'IN_PROGRESS';
+      // Only set to IN_PROGRESS if not already COMPLETE (prevent reverting completed games)
+      if (game.status !== 'COMPLETE') {
+        game.status = 'IN_PROGRESS';
+      }
 
       // Store move in rounds for analysis
       const movePlayer = color === 'black' ? game.host : game.guest;
@@ -2138,103 +2145,6 @@ const initGameSocket = (io) => {
         code: upper,
         rejectorName,
       });
-    });
-
-    // Handle player disconnections
-    socket.on('disconnect', async () => {
-      try {
-        // Get all rooms this socket was in
-        const rooms = Array.from(socket.rooms);
-        
-        for (const roomCode of rooms) {
-          // Skip the socket's own room
-          if (roomCode === socket.id) continue;
-          
-          const upper = roomCode.toUpperCase();
-          const game = await Game.findOne({ code: upper })
-            .populate('host', 'username studentName')
-            .populate('guest', 'username studentName');
-          
-          if (!game) continue;
-          
-          const userId = String(socket.user?.id);
-          const hostId = String(game.host?._id || game.host?.id || game.host);
-          const guestId = String(game.guest?._id || game.guest?.id || game.guest);
-          
-          // Check if the disconnecting user is a participant
-          const isHost = userId === hostId;
-          const isGuest = userId === guestId;
-          
-          if (!isHost && !isGuest) continue;
-          
-          const disconnectedPlayerName = isHost 
-            ? (game.host?.studentName || game.host?.username || 'Host')
-            : (game.guest?.studentName || game.guest?.username || 'Guest');
-          
-          const remainingPlayer = isHost ? 'guest' : 'host';
-          const remainingPlayerName = remainingPlayer === 'host'
-            ? (game.host?.studentName || game.host?.username || 'Host')
-            : (game.guest?.studentName || game.guest?.username || 'Guest');
-          
-          // Always notify remaining player that opponent has left (even if game is complete)
-          io.to(upper).emit('game:player_left', {
-            code: upper,
-            disconnectedPlayerName,
-            remainingPlayer,
-            message: `${disconnectedPlayerName} has left the game and cannot return.`,
-          });
-          
-          // Only end game if it's in progress (not already complete)
-          if (game.status === 'IN_PROGRESS' || (game.status === 'READY' && game.activeStage)) {
-            // End the game
-            game.status = 'COMPLETE';
-            game.completedAt = new Date();
-            
-            // Set winner based on game type
-            if (game.activeStage === 'ROCK_PAPER_SCISSORS') {
-              // Remaining player wins by default
-              game.hostScore = remainingPlayer === 'host' ? 30 : game.hostScore || 0;
-              game.guestScore = remainingPlayer === 'guest' ? 30 : game.guestScore || 0;
-            } else if (game.activeStage === 'MATCHING_PENNIES') {
-              // Remaining player wins by default
-              game.hostPenniesScore = remainingPlayer === 'host' ? 30 : game.hostPenniesScore || 0;
-              game.guestPenniesScore = remainingPlayer === 'guest' ? 30 : game.guestPenniesScore || 0;
-            } else if (game.activeStage === 'GAME_OF_GO') {
-              // For Go, set winner based on who left
-              game.goPhase = 'COMPLETE';
-              const winnerColor = remainingPlayer === 'host' ? 'black' : 'white';
-              game.goFinalScore = {
-                winner: winnerColor,
-                reason: 'disconnect',
-                message: `${disconnectedPlayerName} disconnected. ${remainingPlayerName} wins by forfeit.`,
-              };
-            }
-            
-            await game.save();
-            await updateUserStats(game);
-            
-            // Notify remaining player(s) in the room that game ended due to disconnect
-            io.to(upper).emit('game:player_disconnected', {
-              code: upper,
-              disconnectedPlayerName,
-              remainingPlayer,
-              game: game.toObject(),
-              message: `${disconnectedPlayerName} has left the game and cannot return. You win by forfeit!`,
-            });
-            
-            // Also emit game:ended for consistency
-            io.to(upper).emit('game:ended', {
-              code: upper,
-              reason: 'disconnect',
-              winner: remainingPlayer,
-              message: `${disconnectedPlayerName} disconnected. ${remainingPlayerName} wins.`,
-              game: game.toObject(),
-            });
-          }
-        }
-      } catch (err) {
-        console.error('Error handling player disconnect:', err);
-      }
     });
   });
 

@@ -608,6 +608,36 @@ router.post('/start-pennies', authGuard, async (req, res) => {
   }
 });
 
+// Cancel a game that hasn't started yet (no opponent joined)
+router.post('/cancel', authGuard, async (req, res) => {
+  try {
+    const { code } = req.body;
+    const game = await Game.findOne({ code });
+    
+    if (!game) {
+      return res.status(404).json({ message: 'Game not found' });
+    }
+    
+    // Only the host can cancel a game
+    if (String(game.host) !== req.user.id) {
+      return res.status(403).json({ message: 'Only the host can cancel the game' });
+    }
+    
+    // Can only cancel if no opponent has joined
+    if (game.guest) {
+      return res.status(400).json({ message: 'Cannot cancel - opponent has already joined' });
+    }
+    
+    // Delete the game or mark as cancelled
+    await Game.deleteOne({ _id: game._id });
+    
+    res.json({ message: 'Game cancelled successfully' });
+  } catch (err) {
+    console.error('Error cancelling game:', err);
+    res.status(500).json({ message: 'Failed to cancel game' });
+  }
+});
+
 // End game early (for RPS and Matching Pennies)
 router.post('/end-game', authGuard, async (req, res) => {
   try {
