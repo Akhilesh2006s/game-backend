@@ -1,6 +1,6 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
-const nanoid = require('nanoid');
+const crypto = require('crypto');
 const Game = require('../models/Game');
 const User = require('../models/User');
 const Student = require('../models/Student');
@@ -372,7 +372,7 @@ router.put('/user/:userId/game-unlock', adminAuth, async (req, res) => {
         }
         
         // Create a minimal user account (they'll set password when they first log in)
-        const tempPassword = nanoid.nanoid(16);
+        const tempPassword = crypto.randomBytes(16).toString('hex');
         const passwordHash = await bcrypt.hash(tempPassword, 10);
         
         const newUser = await User.create({
@@ -432,8 +432,6 @@ router.put('/user/:userId/game-unlock', adminAuth, async (req, res) => {
 router.post('/unlock-all-rps-pennies', adminAuth, async (req, res) => {
   try {
     const { groupId, classroomNumber, teamNumber, search, unlock = true } = req.body;
-    const bcrypt = require('bcryptjs');
-    const nanoid = require('nanoid');
     
     // Get all students
     const students = await Student.find({}).lean();
@@ -490,7 +488,7 @@ router.post('/unlock-all-rps-pennies', adminAuth, async (req, res) => {
     for (const item of filteredStudents) {
       if (!item.user) {
         // Create user account for student who hasn't logged in
-        const tempPassword = nanoid.nanoid(16);
+        const tempPassword = crypto.randomBytes(16).toString('hex');
         const passwordHash = await bcrypt.hash(tempPassword, 10);
         
         const newUser = await User.create({
@@ -578,7 +576,7 @@ router.post('/bulk-game-unlock', adminAuth, async (req, res) => {
           const student = await Student.findOne({ email: normalizedEmail });
           if (student) {
             // Create user account
-            const tempPassword = nanoid.nanoid(16);
+            const tempPassword = crypto.randomBytes(16).toString('hex');
             const passwordHash = await bcrypt.hash(tempPassword, 10);
             
             user = await User.create({
