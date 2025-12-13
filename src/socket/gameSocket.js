@@ -2167,17 +2167,25 @@ const initGameSocket = (io) => {
           
           if (!isHost && !isGuest) continue;
           
+          const disconnectedPlayerName = isHost 
+            ? (game.host?.studentName || game.host?.username || 'Host')
+            : (game.guest?.studentName || game.guest?.username || 'Guest');
+          
+          const remainingPlayer = isHost ? 'guest' : 'host';
+          const remainingPlayerName = remainingPlayer === 'host'
+            ? (game.host?.studentName || game.host?.username || 'Host')
+            : (game.guest?.studentName || game.guest?.username || 'Guest');
+          
+          // Always notify remaining player that opponent has left (even if game is complete)
+          io.to(upper).emit('game:player_left', {
+            code: upper,
+            disconnectedPlayerName,
+            remainingPlayer,
+            message: `${disconnectedPlayerName} has left the game and cannot return.`,
+          });
+          
           // Only end game if it's in progress (not already complete)
           if (game.status === 'IN_PROGRESS' || (game.status === 'READY' && game.activeStage)) {
-            const disconnectedPlayerName = isHost 
-              ? (game.host?.studentName || game.host?.username || 'Host')
-              : (game.guest?.studentName || game.guest?.username || 'Guest');
-            
-            const remainingPlayer = isHost ? 'guest' : 'host';
-            const remainingPlayerName = remainingPlayer === 'host'
-              ? (game.host?.studentName || game.host?.username || 'Host')
-              : (game.guest?.studentName || game.guest?.username || 'Guest');
-            
             // End the game
             game.status = 'COMPLETE';
             game.completedAt = new Date();
@@ -2205,7 +2213,7 @@ const initGameSocket = (io) => {
             await game.save();
             await updateUserStats(game);
             
-            // Notify remaining player(s) in the room
+            // Notify remaining player(s) in the room that game ended due to disconnect
             io.to(upper).emit('game:player_disconnected', {
               code: upper,
               disconnectedPlayerName,
