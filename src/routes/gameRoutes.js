@@ -475,7 +475,7 @@ router.get('/', authGuard, async (req, res) => {
     }
 
     const games = await Game.find(query)
-      .sort('-updatedAt')
+      .sort({ completedAt: -1, updatedAt: -1, createdAt: -1 })
       .limit(parseInt(limit))
       .skip(parseInt(skip))
       .populate('host', 'username studentName avatarColor email')
@@ -706,6 +706,8 @@ router.post('/end-game', authGuard, async (req, res) => {
         goCapturedBlack: game.goCapturedBlack,
         goCapturedWhite: game.goCapturedWhite,
         completedAt: game.completedAt,
+        updatedAt: game.updatedAt,
+        createdAt: game.createdAt,
       };
       ioInstance.to(game.code.toUpperCase()).emit('game:ended', {
         game: gameData,
