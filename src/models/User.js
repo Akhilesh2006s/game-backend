@@ -60,6 +60,10 @@ const userSchema = new mongoose.Schema(
       penniesLosses: { type: Number, default: 0 },
       penniesPoints: { type: Number, default: 0 },
     },
+    autoCreated: {
+      type: Boolean,
+      default: false,
+    },
   },
   { timestamps: true }
 );

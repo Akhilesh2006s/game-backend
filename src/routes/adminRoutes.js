@@ -357,51 +357,61 @@ router.put('/user/:userId/game-unlock', adminAuth, async (req, res) => {
     // Try to find user by ID first (faster)
     let user = userId && userId !== 'new' ? await User.findById(userId).lean() : null;
     
-    // If user doesn't exist but email is provided, create user account for student who hasn't logged in
-    if (!user && email) {
-      const normalizedEmail = email.toLowerCase().trim();
-      
-      // Check if user already exists by email (in case account was created)
-      user = await User.findOne({ email: normalizedEmail }).lean();
-      
-      if (!user) {
-        // Check if student exists
-        const student = await Student.findOne({ email: normalizedEmail }).lean();
-        if (!student) {
-          return res.status(404).json({ message: 'Student not found' });
+    // If user doesn't exist, try to find by email or create new account
+    if (!user) {
+      // If email is provided, use it to find or create user
+      if (email) {
+        const normalizedEmail = email.toLowerCase().trim();
+        
+        // Check if user already exists by email (in case account was created)
+        user = await User.findOne({ email: normalizedEmail }).lean();
+        
+        if (!user) {
+          // Check if student exists in Student collection
+          const student = await Student.findOne({ email: normalizedEmail }).lean();
+          if (!student) {
+            return res.status(404).json({ message: 'Student not found. Please ensure the student email exists in the database.' });
+          }
+          
+          // Create a minimal user account for student who hasn't logged in yet
+          // They'll set password when they first log in
+          const tempPassword = crypto.randomBytes(16).toString('hex');
+          const passwordHash = await bcrypt.hash(tempPassword, 10);
+          
+          const newUser = await User.create({
+            username: student.firstName || student.email.split('@')[0],
+            email: normalizedEmail,
+            passwordHash: passwordHash,
+            studentName: student.firstName,
+            role: 'student',
+            goUnlocked: gameType === 'go' ? unlocked : false,
+            rpsUnlocked: gameType === 'rps' ? unlocked : false,
+            penniesUnlocked: gameType === 'pennies' ? unlocked : false,
+            autoCreated: true, // Mark as auto-created so user can complete registration
+          });
+          
+          return res.json({
+            message: unlocked 
+              ? `${gameNames[gameType]} unlocked for user. User account created automatically.` 
+              : `${gameNames[gameType]} locked for user. User account created automatically.`,
+            user: {
+              id: newUser._id,
+              email: newUser.email,
+              username: newUser.username,
+              goUnlocked: newUser.goUnlocked,
+              rpsUnlocked: newUser.rpsUnlocked,
+              penniesUnlocked: newUser.penniesUnlocked,
+            },
+          });
         }
-        
-        // Create a minimal user account (they'll set password when they first log in)
-        const tempPassword = crypto.randomBytes(16).toString('hex');
-        const passwordHash = await bcrypt.hash(tempPassword, 10);
-        
-        const newUser = await User.create({
-          username: student.firstName || student.email.split('@')[0],
-          email: normalizedEmail,
-          passwordHash: passwordHash,
-          studentName: student.firstName,
-          role: 'student',
-          goUnlocked: gameType === 'go' ? unlocked : false,
-          rpsUnlocked: gameType === 'rps' ? unlocked : false,
-          penniesUnlocked: gameType === 'pennies' ? unlocked : false,
-        });
-        
-        return res.json({
-          message: unlocked ? `${gameNames[gameType]} unlocked for user` : `${gameNames[gameType]} locked for user`,
-          user: {
-            id: newUser._id,
-            email: newUser.email,
-            username: newUser.username,
-            goUnlocked: newUser.goUnlocked,
-            rpsUnlocked: newUser.rpsUnlocked,
-            penniesUnlocked: newUser.penniesUnlocked,
-          },
-        });
+      } else if (userId === 'new') {
+        // If userId is 'new' but no email provided, return error
+        return res.status(400).json({ message: 'Email is required to create a new user account' });
       }
     }
     
     if (!user) {
-      return res.status(404).json({ message: 'User not found' });
+      return res.status(404).json({ message: 'User not found. Please provide a valid user ID or email.' });
     }
 
     // Use findByIdAndUpdate for better performance (single query)
@@ -500,6 +510,7 @@ router.post('/unlock-all-rps-pennies', adminAuth, async (req, res) => {
           goUnlocked: false,
           rpsUnlocked: unlock,
           penniesUnlocked: unlock,
+          autoCreated: true, // Mark as auto-created so user can complete registration
         });
         createdCount++;
         item.user = newUser;
@@ -588,6 +599,7 @@ router.post('/bulk-game-unlock', adminAuth, async (req, res) => {
               goUnlocked: gameType === 'go' ? unlock : false,
               rpsUnlocked: gameType === 'rps' ? unlock : false,
               penniesUnlocked: gameType === 'pennies' ? unlock : false,
+              autoCreated: true, // Mark as auto-created so user can complete registration
             });
             createdCount++;
           }

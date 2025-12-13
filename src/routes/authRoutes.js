@@ -31,20 +31,53 @@ router.post('/register', async (req, res) => {
 
     // Always query with normalized (lowercase) email
     const existing = await User.findOne({ email: normalizedEmail });
-    if (existing) {
-      return res.status(409).json({ message: 'Email already registered' });
-    }
-
+    
     // Fetch student name from Student database using normalized email
     const student = await Student.findOne({ email: normalizedEmail });
     const studentName = student ? student.firstName : username;
 
+    // If user exists and was auto-created, allow them to complete registration
+    if (existing) {
+      if (existing.autoCreated === true) {
+        // Allow user to complete their auto-created account by setting their own password and username
+        const passwordHash = await bcrypt.hash(password, 10);
+        existing.username = username;
+        existing.passwordHash = passwordHash;
+        existing.autoCreated = false; // Mark as completed
+        if (student) {
+          existing.studentName = student.firstName;
+        }
+        await existing.save();
+
+        return res.status(200).json({
+          message: 'Account setup completed successfully',
+          token: buildToken(existing),
+          user: {
+            id: existing._id,
+            username: existing.username,
+            studentName: existing.studentName || existing.username,
+            email: existing.email,
+            avatarColor: existing.avatarColor,
+            goUnlocked: existing.goUnlocked || false,
+            rpsUnlocked: existing.rpsUnlocked || false,
+            penniesUnlocked: existing.penniesUnlocked || false,
+            gameStats: existing.gameStats || {},
+          },
+        });
+      } else {
+        // Account already exists and was manually created
+        return res.status(409).json({ message: 'Email already registered. Please login instead.' });
+      }
+    }
+
+    // Create new account
     const passwordHash = await bcrypt.hash(password, 10);
     const user = await User.create({ 
       username, 
       email: normalizedEmail, // Store normalized email
       passwordHash,
-      studentName: studentName 
+      studentName: studentName,
+      autoCreated: false // New registrations are not auto-created
     });
 
     res.status(201).json({
