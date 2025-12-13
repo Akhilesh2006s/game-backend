@@ -24,7 +24,10 @@ const defaultStringOrigins = [
   'http://localhost:5173',
   'http://localhost:5174', 
   'https://games-frontend-mocha.vercel.app',
-  'https://games-frontend-92qdx6knh-akhilesh2006s-projects.vercel.app'
+  'https://games-frontend-92qdx6knh-akhilesh2006s-projects.vercel.app',
+  'https://games-frontend-murex.vercel.app',
+  'https://games-frontend-vlp4.vercel.app',
+  'https://www.globalgoleague.com'
 ];
 
 // Combine all allowed origins
