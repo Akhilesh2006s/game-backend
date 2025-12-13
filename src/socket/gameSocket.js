@@ -2211,7 +2211,7 @@ const initGameSocket = (io) => {
               disconnectedPlayerName,
               remainingPlayer,
               game: game.toObject(),
-              message: `${disconnectedPlayerName} has left the game. You win by forfeit.`,
+              message: `${disconnectedPlayerName} has left the game and cannot return. You win by forfeit!`,
             });
             
             // Also emit game:ended for consistency

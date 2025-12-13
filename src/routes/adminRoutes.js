@@ -11,7 +11,7 @@ router.get('/leaderboard', adminAuth, async (req, res) => {
   try {
     const { groupId, classroomNumber, teamNumber, search } = req.query;
     
-    // Get all students
+    // Get ALL students from database (even if they haven't logged in)
     const students = await Student.find({}).lean();
     
     // Get all unique groups, classrooms, and teams
@@ -19,46 +19,88 @@ router.get('/leaderboard', adminAuth, async (req, res) => {
     const allUniqueClassrooms = [...new Set(students.map(s => s.classroomNumber).filter(Boolean))].sort();
     const allUniqueTeams = [...new Set(students.map(s => s.teamNumber).filter(Boolean))].sort();
     
-    // Get all users who are students (not admin)
-    let users = await User.find({ role: { $ne: 'admin' } })
-      .select('username studentName email gameStats goUnlocked rpsUnlocked penniesUnlocked')
+    // Get all users who are students (not admin) - for those who have logged in
+    const users = await User.find({ role: { $ne: 'admin' } })
+      .select('username studentName email gameStats goUnlocked rpsUnlocked penniesUnlocked _id')
       .lean();
     
-    // Filter users to only those with emails in Student collection
-    const studentEmails = new Set(students.map(s => s.email.toLowerCase()));
-    users = users.filter(u => studentEmails.has(u.email.toLowerCase()));
+    // Create a map of users by email for quick lookup
+    const userMap = new Map();
+    users.forEach(user => {
+      userMap.set(user.email.toLowerCase(), user);
+    });
     
-    // Map users with student data
-    const leaderboard = users.map(user => {
-      const student = students.find(s => s.email.toLowerCase() === user.email.toLowerCase());
-      return {
-        ...user,
-        enrollmentNo: student?.enrollmentNo || '',
-        groupId: student?.groupId || '',
-        classroomNumber: student?.classroomNumber || '',
-        teamNumber: student?.teamNumber || '',
-        firstName: student?.firstName || user.studentName || user.username,
-        lastName: student?.lastName || '',
-        goUnlocked: user.goUnlocked || false,
-        rpsUnlocked: user.rpsUnlocked || false,
-        penniesUnlocked: user.penniesUnlocked || false,
-        stats: user.gameStats || {
-          totalGames: 0,
-          wins: 0,
-          losses: 0,
-          draws: 0,
-          totalPoints: 0,
-          rpsWins: 0,
-          rpsLosses: 0,
-          rpsPoints: 0,
-          goWins: 0,
-          goLosses: 0,
-          goPoints: 0,
-          penniesWins: 0,
-          penniesLosses: 0,
-          penniesPoints: 0,
-        },
-      };
+    // Map ALL students (including those who haven't logged in) with their user data if available
+    const leaderboard = students.map(student => {
+      const user = userMap.get(student.email.toLowerCase());
+      
+      // If user exists (has logged in), use their data
+      if (user) {
+        return {
+          _id: user._id,
+          email: student.email,
+          username: user.username || '',
+          studentName: user.studentName || '',
+          enrollmentNo: student.enrollmentNo || '',
+          groupId: student.groupId || '',
+          classroomNumber: student.classroomNumber || '',
+          teamNumber: student.teamNumber || '',
+          firstName: student.firstName || user.studentName || user.username || '',
+          lastName: student.lastName || '',
+          goUnlocked: user.goUnlocked || false,
+          rpsUnlocked: user.rpsUnlocked || false,
+          penniesUnlocked: user.penniesUnlocked || false,
+          stats: user.gameStats || {
+            totalGames: 0,
+            wins: 0,
+            losses: 0,
+            draws: 0,
+            totalPoints: 0,
+            rpsWins: 0,
+            rpsLosses: 0,
+            rpsPoints: 0,
+            goWins: 0,
+            goLosses: 0,
+            goPoints: 0,
+            penniesWins: 0,
+            penniesLosses: 0,
+            penniesPoints: 0,
+          },
+        };
+      } else {
+        // Student hasn't logged in yet - still show them with default values
+        return {
+          _id: null, // No user account yet
+          email: student.email,
+          username: '',
+          studentName: '',
+          enrollmentNo: student.enrollmentNo || '',
+          groupId: student.groupId || '',
+          classroomNumber: student.classroomNumber || '',
+          teamNumber: student.teamNumber || '',
+          firstName: student.firstName || '',
+          lastName: student.lastName || '',
+          goUnlocked: false,
+          rpsUnlocked: false,
+          penniesUnlocked: false,
+          stats: {
+            totalGames: 0,
+            wins: 0,
+            losses: 0,
+            draws: 0,
+            totalPoints: 0,
+            rpsWins: 0,
+            rpsLosses: 0,
+            rpsPoints: 0,
+            goWins: 0,
+            goLosses: 0,
+            goPoints: 0,
+            penniesWins: 0,
+            penniesLosses: 0,
+            penniesPoints: 0,
+          },
+        };
+      }
     });
     
     // Apply filters
