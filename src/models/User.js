@@ -17,6 +17,7 @@ const userSchema = new mongoose.Schema(
       unique: true,
       lowercase: true,
       trim: true,
+      index: true, // Add index for faster email lookups
     },
     passwordHash: {
       type: String,

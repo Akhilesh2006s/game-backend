@@ -346,64 +346,80 @@ router.put('/user/:userId/game-unlock', adminAuth, async (req, res) => {
       return res.status(400).json({ message: 'unlocked must be a boolean' });
     }
 
-    let user = await User.findById(userId);
-    
-    // If user doesn't exist but email is provided, create user account for student who hasn't logged in
-    if (!user && email) {
-      const normalizedEmail = email.toLowerCase().trim();
-      
-      // Check if student exists
-      const student = await Student.findOne({ email: normalizedEmail });
-      if (!student) {
-        return res.status(404).json({ message: 'Student not found' });
-      }
-      
-      // Create a minimal user account (they'll set password when they first log in)
-      // Generate a temporary password hash (they'll need to reset password on first login)
-      const tempPassword = nanoid.nanoid(16); // Temporary random password
-      const passwordHash = await bcrypt.hash(tempPassword, 10);
-      
-      user = await User.create({
-        username: student.firstName || student.email.split('@')[0],
-        email: normalizedEmail,
-        passwordHash: passwordHash, // Temporary - user will need to reset password on first login
-        studentName: student.firstName,
-        role: 'student',
-        goUnlocked: false,
-        rpsUnlocked: false,
-        penniesUnlocked: false,
-      });
-    }
-    
-    if (!user) {
-      return res.status(404).json({ message: 'User not found' });
-    }
-
     const gameNames = {
       go: 'Game of Go',
       rps: 'Rock Paper Scissors',
       pennies: 'Matching Pennies'
     };
 
-    if (gameType === 'go') {
-      user.goUnlocked = unlocked;
-    } else if (gameType === 'rps') {
-      user.rpsUnlocked = unlocked;
-    } else if (gameType === 'pennies') {
-      user.penniesUnlocked = unlocked;
+    const updateField = gameType === 'go' ? 'goUnlocked' : gameType === 'rps' ? 'rpsUnlocked' : 'penniesUnlocked';
+
+    // Try to find user by ID first (faster)
+    let user = userId && userId !== 'new' ? await User.findById(userId).lean() : null;
+    
+    // If user doesn't exist but email is provided, create user account for student who hasn't logged in
+    if (!user && email) {
+      const normalizedEmail = email.toLowerCase().trim();
+      
+      // Check if user already exists by email (in case account was created)
+      user = await User.findOne({ email: normalizedEmail }).lean();
+      
+      if (!user) {
+        // Check if student exists
+        const student = await Student.findOne({ email: normalizedEmail }).lean();
+        if (!student) {
+          return res.status(404).json({ message: 'Student not found' });
+        }
+        
+        // Create a minimal user account (they'll set password when they first log in)
+        const tempPassword = nanoid.nanoid(16);
+        const passwordHash = await bcrypt.hash(tempPassword, 10);
+        
+        const newUser = await User.create({
+          username: student.firstName || student.email.split('@')[0],
+          email: normalizedEmail,
+          passwordHash: passwordHash,
+          studentName: student.firstName,
+          role: 'student',
+          goUnlocked: gameType === 'go' ? unlocked : false,
+          rpsUnlocked: gameType === 'rps' ? unlocked : false,
+          penniesUnlocked: gameType === 'pennies' ? unlocked : false,
+        });
+        
+        return res.json({
+          message: unlocked ? `${gameNames[gameType]} unlocked for user` : `${gameNames[gameType]} locked for user`,
+          user: {
+            id: newUser._id,
+            email: newUser.email,
+            username: newUser.username,
+            goUnlocked: newUser.goUnlocked,
+            rpsUnlocked: newUser.rpsUnlocked,
+            penniesUnlocked: newUser.penniesUnlocked,
+          },
+        });
+      }
+    }
+    
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
     }
 
-    await user.save();
+    // Use findByIdAndUpdate for better performance (single query)
+    const updatedUser = await User.findByIdAndUpdate(
+      user._id,
+      { $set: { [updateField]: unlocked } },
+      { new: true, lean: true }
+    ).select('_id email username goUnlocked rpsUnlocked penniesUnlocked');
 
     res.json({
       message: unlocked ? `${gameNames[gameType]} unlocked for user` : `${gameNames[gameType]} locked for user`,
       user: {
-        id: user._id,
-        email: user.email,
-        username: user.username,
-        goUnlocked: user.goUnlocked,
-        rpsUnlocked: user.rpsUnlocked,
-        penniesUnlocked: user.penniesUnlocked,
+        id: updatedUser._id,
+        email: updatedUser.email,
+        username: updatedUser.username,
+        goUnlocked: updatedUser.goUnlocked,
+        rpsUnlocked: updatedUser.rpsUnlocked,
+        penniesUnlocked: updatedUser.penniesUnlocked,
       },
     });
   } catch (err) {
