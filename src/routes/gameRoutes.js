@@ -625,33 +625,47 @@ router.post('/end-game', authGuard, async (req, res) => {
     if (game.status === 'COMPLETE') {
       return res.status(400).json({ message: 'Game is already complete' });
     }
-    if (game.activeStage !== 'ROCK_PAPER_SCISSORS' && game.activeStage !== 'MATCHING_PENNIES') {
-      return res.status(400).json({ message: 'Can only end Rock Paper Scissors or Matching Pennies games' });
+    if (game.activeStage !== 'ROCK_PAPER_SCISSORS' && game.activeStage !== 'MATCHING_PENNIES' && game.activeStage !== 'GAME_OF_GO') {
+      return res.status(400).json({ message: 'Invalid game stage' });
     }
 
-    // Calculate winner based on current scores
-    let winner = null;
+    // The player who exits forfeits - opponent wins
+    const exitingPlayerId = req.user.id;
+    const isHostExiting = String(game.host) === exitingPlayerId;
+    const winner = isHostExiting ? 'guest' : 'host';
+    const remainingPlayer = isHostExiting ? 'guest' : 'host';
+
+    // Give the remaining player a forfeit win with their current points
     if (game.activeStage === 'ROCK_PAPER_SCISSORS') {
-      if (game.hostScore > game.guestScore) {
-        winner = 'host';
-      } else if (game.guestScore > game.hostScore) {
-        winner = 'guest';
+      // Keep their current score, they win by forfeit
+      if (remainingPlayer === 'host') {
+        game.hostScore = Math.max(game.hostScore || 0, 1); // At least 1 point for winning
       } else {
-        winner = null; // Draw
+        game.guestScore = Math.max(game.guestScore || 0, 1);
       }
     } else if (game.activeStage === 'MATCHING_PENNIES') {
-      if (game.hostPenniesScore > game.guestPenniesScore) {
-        winner = 'host';
-      } else if (game.guestPenniesScore > game.hostPenniesScore) {
-        winner = 'guest';
+      // Keep their current score, they win by forfeit
+      if (remainingPlayer === 'host') {
+        game.hostPenniesScore = Math.max(game.hostPenniesScore || 0, 1);
       } else {
-        winner = null; // Draw
+        game.guestPenniesScore = Math.max(game.guestPenniesScore || 0, 1);
       }
+    } else if (game.activeStage === 'GAME_OF_GO') {
+      // For Game of Go, winner is the remaining player (opponent resigned)
+      const winnerColor = isHostExiting ? 'white' : 'black';
+      game.goPhase = 'COMPLETE';
+      game.goFinalScore = {
+        winner: winnerColor,
+        reason: 'resignation',
+        blackScore: game.goCapturedBlack || 0,
+        whiteScore: game.goCapturedWhite || 0,
+      };
     }
 
     // Mark game as complete
     game.status = 'COMPLETE';
     game.completedAt = new Date();
+    game.forfeitedBy = exitingPlayerId;
     await game.save();
 
     // Update user stats
@@ -687,21 +701,30 @@ router.post('/end-game', authGuard, async (req, res) => {
         guestScore: game.guestScore,
         hostPenniesScore: game.hostPenniesScore,
         guestPenniesScore: game.guestPenniesScore,
+        goPhase: game.goPhase,
+        goFinalScore: game.goFinalScore,
+        goCapturedBlack: game.goCapturedBlack,
+        goCapturedWhite: game.goCapturedWhite,
         completedAt: game.completedAt,
       };
       ioInstance.to(game.code.toUpperCase()).emit('game:ended', {
         game: gameData,
         winner,
         gameType: game.activeStage,
+        reason: 'forfeit',
+        message: `Opponent has left. You win by forfeit!`,
       });
     }
 
+    const winnerName = winner === 'host' 
+      ? (game.host.studentName || game.host.username) 
+      : (game.guest.studentName || game.guest.username);
+    
     res.json({ 
       game,
       winner,
-      message: winner 
-        ? `${winner === 'host' ? game.host.studentName || game.host.username : game.guest.studentName || game.guest.username} wins!`
-        : 'Game ended in a draw!'
+      reason: 'forfeit',
+      message: `${winnerName} wins by forfeit!`
     });
   } catch (err) {
     console.error('Error ending game:', err);
