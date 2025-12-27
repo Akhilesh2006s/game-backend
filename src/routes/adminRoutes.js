@@ -538,6 +538,106 @@ router.post('/unlock-all-rps-pennies', adminAuth, async (req, res) => {
   }
 });
 
+// Unlock/Lock Game of Go for all users matching filters
+router.post('/unlock-all-go', adminAuth, async (req, res) => {
+  try {
+    const { groupId, classroomNumber, teamNumber, search, unlock = true } = req.body;
+    
+    // Get all students
+    const students = await Student.find({}).lean();
+    
+    // Get all users who are students (not admin)
+    let users = await User.find({ role: { $ne: 'admin' } })
+      .select('username studentName email goUnlocked')
+      .lean();
+    
+    // Create a map of users by email
+    const userMap = new Map();
+    users.forEach(u => userMap.set(u.email.toLowerCase(), u));
+    
+    // Map ALL students (including those who haven't logged in)
+    let filteredStudents = students.map(student => {
+      const user = userMap.get(student.email.toLowerCase());
+      return {
+        user,
+        student,
+        enrollmentNo: student.enrollmentNo || '',
+        groupId: student.groupId || '',
+        classroomNumber: student.classroomNumber || '',
+        teamNumber: student.teamNumber || '',
+        firstName: student.firstName || '',
+        lastName: student.lastName || '',
+      };
+    });
+    
+    // Apply filters
+    if (groupId && groupId !== 'all') {
+      filteredStudents = filteredStudents.filter(item => item.groupId === groupId);
+    }
+    if (classroomNumber && classroomNumber !== 'all') {
+      filteredStudents = filteredStudents.filter(item => item.classroomNumber === classroomNumber);
+    }
+    if (teamNumber && teamNumber !== 'all') {
+      filteredStudents = filteredStudents.filter(item => item.teamNumber === teamNumber);
+    }
+    if (search) {
+      const searchLower = search.toLowerCase();
+      filteredStudents = filteredStudents.filter(item => 
+        item.firstName?.toLowerCase().includes(searchLower) ||
+        item.lastName?.toLowerCase().includes(searchLower) ||
+        item.student.email?.toLowerCase().includes(searchLower) ||
+        item.enrollmentNo?.toLowerCase().includes(searchLower) ||
+        item.user?.username?.toLowerCase().includes(searchLower)
+      );
+    }
+    
+    // Create User accounts for students who don't have one, then update all
+    let createdCount = 0;
+    let updatedCount = 0;
+    
+    for (const item of filteredStudents) {
+      if (!item.user) {
+        // Create user account for student who hasn't logged in
+        const tempPassword = crypto.randomBytes(16).toString('hex');
+        const passwordHash = await bcrypt.hash(tempPassword, 10);
+        
+        const newUser = await User.create({
+          username: item.student.firstName || item.student.email.split('@')[0],
+          email: item.student.email.toLowerCase(),
+          passwordHash: passwordHash,
+          studentName: item.student.firstName,
+          role: 'student',
+          goUnlocked: unlock,
+          rpsUnlocked: false,
+          penniesUnlocked: false,
+          autoCreated: true, // Mark as auto-created so user can complete registration
+        });
+        createdCount++;
+        item.user = newUser;
+      } else {
+        // Update existing user
+        await User.updateOne(
+          { _id: item.user._id },
+          { $set: { goUnlocked: unlock } }
+        );
+        updatedCount++;
+      }
+    }
+    
+    res.json({
+      message: unlock 
+        ? `Unlocked Game of Go for ${createdCount + updatedCount} student(s) (${createdCount} new accounts created)`
+        : `Locked Game of Go for ${updatedCount} user(s)`,
+      count: createdCount + updatedCount,
+      created: createdCount,
+      updated: updatedCount,
+    });
+  } catch (err) {
+    console.error('Error unlocking Game of Go for all users:', err);
+    res.status(500).json({ message: 'Failed to unlock Game of Go' });
+  }
+});
+
 // Bulk unlock/lock games for selected users
 router.post('/bulk-game-unlock', adminAuth, async (req, res) => {
   try {
