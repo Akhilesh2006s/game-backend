@@ -172,24 +172,37 @@ router.get('/games', adminAuth, async (req, res) => {
       .select('code host guest hostScore guestScore hostPenniesScore guestPenniesScore goFinalScore goBoardSize goCapturedBlack goCapturedWhite status activeStage createdAt updatedAt completedAt')
       .lean();
     
-    // Add enrollment numbers
-    const gamesWithEnrollment = await Promise.all(
-      games.map(async (game) => {
-        if (game.host?.email) {
-          const hostStudent = await Student.findOne({ email: game.host.email.toLowerCase() });
-          if (hostStudent) {
-            game.host.enrollmentNo = hostStudent.enrollmentNo;
-          }
+    // Add enrollment numbers - batch fetch to avoid N+1 queries
+    const allEmails = new Set();
+    games.forEach(game => {
+      if (game.host?.email) allEmails.add(game.host.email.toLowerCase());
+      if (game.guest?.email) allEmails.add(game.guest.email.toLowerCase());
+    });
+    
+    const students = await Student.find({ 
+      email: { $in: Array.from(allEmails) } 
+    }).select('email enrollmentNo').lean();
+    
+    const studentMap = new Map();
+    students.forEach(student => {
+      studentMap.set(student.email.toLowerCase(), student);
+    });
+    
+    const gamesWithEnrollment = games.map(game => {
+      if (game.host?.email) {
+        const hostStudent = studentMap.get(game.host.email.toLowerCase());
+        if (hostStudent) {
+          game.host.enrollmentNo = hostStudent.enrollmentNo;
         }
-        if (game.guest?.email) {
-          const guestStudent = await Student.findOne({ email: game.guest.email.toLowerCase() });
-          if (guestStudent) {
-            game.guest.enrollmentNo = guestStudent.enrollmentNo;
-          }
+      }
+      if (game.guest?.email) {
+        const guestStudent = studentMap.get(game.guest.email.toLowerCase());
+        if (guestStudent) {
+          game.guest.enrollmentNo = guestStudent.enrollmentNo;
         }
-        return game;
-      })
-    );
+      }
+      return game;
+    });
     
     // Apply search filter if provided
     let filteredGames = gamesWithEnrollment;
@@ -253,24 +266,37 @@ router.get('/student/:email', adminAuth, async (req, res) => {
       .select('code host guest hostScore guestScore hostPenniesScore guestPenniesScore goFinalScore goBoardSize goCapturedBlack goCapturedWhite status activeStage createdAt updatedAt completedAt')
       .lean();
     
-    // Add enrollment numbers to games
-    const gamesWithEnrollment = await Promise.all(
-      games.map(async (game) => {
-        if (game.host?.email) {
-          const hostStudent = await Student.findOne({ email: game.host.email.toLowerCase() });
-          if (hostStudent) {
-            game.host.enrollmentNo = hostStudent.enrollmentNo;
-          }
+    // Add enrollment numbers to games - batch fetch to avoid N+1 queries
+    const allEmails = new Set();
+    games.forEach(game => {
+      if (game.host?.email) allEmails.add(game.host.email.toLowerCase());
+      if (game.guest?.email) allEmails.add(game.guest.email.toLowerCase());
+    });
+    
+    const students = await Student.find({ 
+      email: { $in: Array.from(allEmails) } 
+    }).select('email enrollmentNo').lean();
+    
+    const studentMap = new Map();
+    students.forEach(student => {
+      studentMap.set(student.email.toLowerCase(), student);
+    });
+    
+    const gamesWithEnrollment = games.map(game => {
+      if (game.host?.email) {
+        const hostStudent = studentMap.get(game.host.email.toLowerCase());
+        if (hostStudent) {
+          game.host.enrollmentNo = hostStudent.enrollmentNo;
         }
-        if (game.guest?.email) {
-          const guestStudent = await Student.findOne({ email: game.guest.email.toLowerCase() });
-          if (guestStudent) {
-            game.guest.enrollmentNo = guestStudent.enrollmentNo;
-          }
+      }
+      if (game.guest?.email) {
+        const guestStudent = studentMap.get(game.guest.email.toLowerCase());
+        if (guestStudent) {
+          game.guest.enrollmentNo = guestStudent.enrollmentNo;
         }
-        return game;
-      })
-    );
+      }
+      return game;
+    });
     
     // Calculate detailed stats
     const gameStats = {

@@ -341,20 +341,33 @@ router.get('/search', authGuard, async (req, res) => {
       .limit(hasQuery ? 20 : 50) // Show more when no query
       .lean();
 
-    // Add enrollment numbers to games (do this early so we can return it if needed)
-    const gamesWithEnrollment = await Promise.all(
-      gamesByCode.map(async (game) => {
-        if (game.host?.email) {
-          const hostStudent = await Student.findOne({ email: game.host.email.toLowerCase() });
-          if (hostStudent) game.host.enrollmentNo = hostStudent.enrollmentNo;
-        }
-        if (game.guest?.email) {
-          const guestStudent = await Student.findOne({ email: game.guest.email.toLowerCase() });
-          if (guestStudent) game.guest.enrollmentNo = guestStudent.enrollmentNo;
-        }
-        return game;
-      })
-    );
+    // Add enrollment numbers to games - batch fetch to avoid N+1 queries
+    const allEmails = new Set();
+    gamesByCode.forEach(game => {
+      if (game.host?.email) allEmails.add(game.host.email.toLowerCase());
+      if (game.guest?.email) allEmails.add(game.guest.email.toLowerCase());
+    });
+    
+    const students = await Student.find({ 
+      email: { $in: Array.from(allEmails) } 
+    }).select('email enrollmentNo').lean();
+    
+    const studentMap = new Map();
+    students.forEach(student => {
+      studentMap.set(student.email.toLowerCase(), student);
+    });
+    
+    const gamesWithEnrollment = gamesByCode.map(game => {
+      if (game.host?.email) {
+        const hostStudent = studentMap.get(game.host.email.toLowerCase());
+        if (hostStudent) game.host.enrollmentNo = hostStudent.enrollmentNo;
+      }
+      if (game.guest?.email) {
+        const guestStudent = studentMap.get(game.guest.email.toLowerCase());
+        if (guestStudent) game.guest.enrollmentNo = guestStudent.enrollmentNo;
+      }
+      return game;
+    });
 
     // If searching only by code, return early
     if (type === 'code') {
@@ -435,13 +448,13 @@ router.get('/search', authGuard, async (req, res) => {
       .slice(0, 50);
 
     // Enrich users with enrollment numbers
-    const studentMap = new Map();
+    const playerStudentMap = new Map();
     matchingStudents.forEach(s => {
-      studentMap.set(s.email.toLowerCase(), s);
+      playerStudentMap.set(s.email.toLowerCase(), s);
     });
 
     const players = matchingUsers.map(user => {
-      const student = studentMap.get(user.email.toLowerCase());
+      const student = playerStudentMap.get(user.email.toLowerCase());
       return {
         ...user,
         enrollmentNo: student?.enrollmentNo || null,
@@ -482,30 +495,44 @@ router.get('/', authGuard, async (req, res) => {
       .populate('guest', 'username studentName avatarColor email')
       .select('code host guest hostScore guestScore hostPenniesScore guestPenniesScore goFinalScore goBoardSize goCapturedBlack goCapturedWhite status activeStage createdAt updatedAt completedAt');
 
-    // Fetch enrollment numbers for host and guest from Student model
-    const gamesWithEnrollment = await Promise.all(
-      games.map(async (game) => {
-        const gameObj = game.toObject();
-        
-        // Get enrollment number for host
-        if (gameObj.host?.email) {
-          const hostStudent = await Student.findOne({ email: gameObj.host.email.toLowerCase() });
-          if (hostStudent) {
-            gameObj.host.enrollmentNo = hostStudent.enrollmentNo;
-          }
+    // Fetch enrollment numbers for host and guest from Student model - batch fetch to avoid N+1 queries
+    const allEmails = new Set();
+    games.forEach(game => {
+      const gameObj = game.toObject();
+      if (gameObj.host?.email) allEmails.add(gameObj.host.email.toLowerCase());
+      if (gameObj.guest?.email) allEmails.add(gameObj.guest.email.toLowerCase());
+    });
+    
+    const students = await Student.find({ 
+      email: { $in: Array.from(allEmails) } 
+    }).select('email enrollmentNo').lean();
+    
+    const studentMap = new Map();
+    students.forEach(student => {
+      studentMap.set(student.email.toLowerCase(), student);
+    });
+    
+    const gamesWithEnrollment = games.map(game => {
+      const gameObj = game.toObject();
+      
+      // Get enrollment number for host
+      if (gameObj.host?.email) {
+        const hostStudent = studentMap.get(gameObj.host.email.toLowerCase());
+        if (hostStudent) {
+          gameObj.host.enrollmentNo = hostStudent.enrollmentNo;
         }
-        
-        // Get enrollment number for guest
-        if (gameObj.guest?.email) {
-          const guestStudent = await Student.findOne({ email: gameObj.guest.email.toLowerCase() });
-          if (guestStudent) {
-            gameObj.guest.enrollmentNo = guestStudent.enrollmentNo;
-          }
+      }
+      
+      // Get enrollment number for guest
+      if (gameObj.guest?.email) {
+        const guestStudent = studentMap.get(gameObj.guest.email.toLowerCase());
+        if (guestStudent) {
+          gameObj.guest.enrollmentNo = guestStudent.enrollmentNo;
         }
-        
-        return gameObj;
-      })
-    );
+      }
+      
+      return gameObj;
+    });
 
     // Get total count for pagination
     const total = await Game.countDocuments(query);
